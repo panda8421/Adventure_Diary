@@ -1,0 +1,2760 @@
+/* ============================================================
+   Three.js 3D 地图模块 - 球面曲面地形图
+   使用 Three.js + GeoJSON 实现立体曲面地图
+   ============================================================ */
+
+var ThreeMap = (function() {
+  var scene, camera, renderer, controls, composer;
+  var mapGroup, markersGroup, atmosphereGroup;
+  var raycaster, mouse;
+  var container;
+  var isReady = false;
+  var chinaGeoJSON = null;
+  var onRouteClick = null;
+  var animationId = null;
+  var markerMeshes = [];
+  var bloomEnabled = false;
+  var hoveredProvince = null;
+  var hoverLabel = null;
+  var provinceMeshes = [];
+  var hoveredMarker = null;
+
+  // 视图模式：'global' 全局地图 | 'mountain' 单山地形
+  var viewMode = 'global';
+  var mountainGroup = null;
+  var currentMountainRoute = null;
+  var backButton = null;
+  var isCameraAnimating = false;
+
+  // 地形编辑器
+  var editMode = false;
+  var editBrushSize = 3;
+  var editBrushStrength = 0.2;
+  var editTool = 'raise';
+  var editorPanel = null;
+  var editCursor = null;
+  var terrainMesh = null;
+  var baseHeights = null;
+  var isEditing = false;
+  var editMouse = null;
+  var editRaycaster = null;
+
+  // 路径编辑
+  var trailHandlesGroup = null;
+  var selectedTrailIndex = -1;
+  var isDraggingTrail = false;
+  var workingTrailPoints = null;
+
+  // 配置
+  var CONFIG = {
+    sphereRadius: 100,
+    mapHeight: 3,
+    mapTopColor: 0x3a4a62,
+    mapEmissive: 0x0a1420,
+    borderColor: 0x6a8ab5,
+    sideColor: 0x141c28,
+    markerColor: 0xfca311,
+    markerGlowColor: 0xff8800,
+    bgColor: 0x05060a,
+    atmosphereColor: 0x3366aa,
+    oceanColor: 0x070d18,
+    cameraDistance: 140,
+    cameraAlpha: 55,
+    cameraBeta: -100,
+    bloomStrength: 0.4,
+    bloomRadius: 0.5,
+    bloomThreshold: 0.6
+  };
+
+  function init(containerId, callback) {
+    container = document.getElementById(containerId);
+    if (!container) {
+      console.error('[ThreeMap] 容器不存在:', containerId);
+      return;
+    }
+
+    if (!editMouse) editMouse = new THREE.Vector2();
+    if (!editRaycaster) editRaycaster = new THREE.Raycaster();
+
+    // 初始化场景
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(CONFIG.bgColor);
+    scene.fog = new THREE.Fog(CONFIG.bgColor, 180, 350);
+
+    // 初始化相机
+    var aspect = container.clientWidth / container.clientHeight;
+    camera = new THREE.PerspectiveCamera(40, aspect, 0.1, 1000);
+    setCameraPosition(CONFIG.cameraBeta, CONFIG.cameraAlpha, CONFIG.cameraDistance);
+
+    // 初始化渲染器
+    renderer = new THREE.WebGLRenderer({
+      antialias: true,
+      alpha: true
+    });
+    renderer.setSize(container.clientWidth, container.clientHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    container.appendChild(renderer.domElement);
+
+    // 初始化后处理（Bloom 辉光）
+    setupPostProcessing();
+
+    // 初始化控制器
+    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.15;
+    controls.rotateSpeed = 0.4;
+    controls.zoomSpeed = 0.7;
+    controls.panSpeed = 0.5;
+    controls.minDistance = CONFIG.sphereRadius * 1.3;
+    controls.maxDistance = CONFIG.sphereRadius * 3.0;
+    controls.minPolarAngle = Math.PI * 0.1;
+    controls.maxPolarAngle = Math.PI * 0.75;
+    controls.enablePan = false;
+    // 左右键都能旋转，操作更灵活
+    // 0=ROTATE, 1=DOLLY, 2=PAN
+    controls.mouseButtons = {
+      LEFT: 0,
+      MIDDLE: 1,
+      RIGHT: 0
+    };
+
+    // 射线检测
+    raycaster = new THREE.Raycaster();
+    mouse = new THREE.Vector2();
+
+    // 灯光
+    setupLights();
+
+    // 地图组
+    mapGroup = new THREE.Group();
+    scene.add(mapGroup);
+
+    // 标记组
+    markersGroup = new THREE.Group();
+    scene.add(markersGroup);
+
+    // 大气层组
+    atmosphereGroup = new THREE.Group();
+    scene.add(atmosphereGroup);
+
+    // 添加星空背景
+    createStars();
+
+    // 添加大气层
+    createAtmosphere();
+
+    // 事件监听
+    window.addEventListener('resize', onWindowResize);
+    renderer.domElement.addEventListener('click', onMouseClick);
+    renderer.domElement.addEventListener('mousemove', onMouseMove);
+    renderer.domElement.addEventListener('pointerdown', onTerrainPointerDown);
+    renderer.domElement.addEventListener('pointermove', onTerrainPointerMove);
+    renderer.domElement.addEventListener('wheel', onTerrainWheel, { passive: false });
+    window.addEventListener('pointerup', onTerrainPointerUp);
+    renderer.domElement.addEventListener('contextmenu', function(e) { if (editMode) e.preventDefault(); });
+    // 捕获阶段拦截鼠标/触摸事件，阻止OrbitControls在编辑模式下响应
+    renderer.domElement.addEventListener('mousedown', function(e) {
+      if (editMode && viewMode === 'mountain') {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+      }
+    }, true);
+    renderer.domElement.addEventListener('touchstart', function(e) {
+      if (editMode && viewMode === 'mountain') {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+      }
+    }, { passive: false, capture: true });
+    renderer.domElement.addEventListener('wheel', function(e) {
+      if (editMode && viewMode === 'mountain') {
+        e.stopImmediatePropagation();
+      }
+    }, { passive: false, capture: true });
+
+    setupEditorEvents();
+
+    // 开始渲染循环
+    animate();
+
+    // 加载地图数据
+    loadGeoJSON(function() {
+      buildSphereMap();
+      isReady = true;
+      if (callback) callback();
+    });
+  }
+
+  function setupLights() {
+    // 半球光：天空色 + 地面色，提亮暗部
+    var hemiLight = new THREE.HemisphereLight(0x7a9acc, 0x1a2030, 0.5);
+    hemiLight.position.set(0, 100, 0);
+    scene.add(hemiLight);
+
+    // 主光源：斜上方 45°，暖色调，照亮顶面
+    var mainLight = new THREE.DirectionalLight(0xfff2e0, 1.0);
+    var mainAngle = 45 * Math.PI / 180;
+    mainLight.position.set(
+      Math.cos(mainAngle) * 80,
+      Math.sin(mainAngle) * 80,
+      40
+    );
+    mainLight.castShadow = true;
+    mainLight.shadow.mapSize.width = 2048;
+    mainLight.shadow.mapSize.height = 2048;
+    mainLight.shadow.camera.near = 1;
+    mainLight.shadow.camera.far = 300;
+    mainLight.shadow.camera.left = -120;
+    mainLight.shadow.camera.right = 120;
+    mainLight.shadow.camera.top = 120;
+    mainLight.shadow.camera.bottom = -120;
+    scene.add(mainLight);
+
+    // 补光：左侧冷色，柔化阴影
+    var fillLight = new THREE.DirectionalLight(0x5a7aaa, 0.35);
+    fillLight.position.set(-60, 30, 50);
+    scene.add(fillLight);
+
+    // 背光：后方弱光，勾勒轮廓
+    var rimLight = new THREE.DirectionalLight(0x4466aa, 0.25);
+    rimLight.position.set(0, 40, -70);
+    scene.add(rimLight);
+
+    // 中心点光源：微暖调，增强中心区域层次
+    var pointLight = new THREE.PointLight(0xffbb88, 0.4, 160, 2);
+    pointLight.position.set(0, 30, 60);
+    scene.add(pointLight);
+  }
+
+  // 设置后处理（Bloom 辉光）
+  function setupPostProcessing() {
+    // 检查后处理依赖是否加载
+    if (typeof THREE.EffectComposer === 'undefined' ||
+        typeof THREE.RenderPass === 'undefined' ||
+        typeof THREE.UnrealBloomPass === 'undefined') {
+      console.warn('[ThreeMap] 后处理依赖未加载，跳过 Bloom');
+      bloomEnabled = false;
+      return;
+    }
+
+    try {
+      composer = new THREE.EffectComposer(renderer);
+      composer.setSize(container.clientWidth, container.clientHeight);
+
+      // RenderPass：渲染场景
+      var renderPass = new THREE.RenderPass(scene, camera);
+      composer.addPass(renderPass);
+
+      // UnrealBloomPass：辉光效果
+      var bloomPass = new THREE.UnrealBloomPass(
+        new THREE.Vector2(container.clientWidth, container.clientHeight),
+        CONFIG.bloomStrength,  // strength
+        CONFIG.bloomRadius,    // radius
+        CONFIG.bloomThreshold  // threshold
+      );
+      composer.addPass(bloomPass);
+
+      bloomEnabled = true;
+      console.log('[ThreeMap] Bloom 后处理已启用');
+    } catch (e) {
+      console.warn('[ThreeMap] 后处理初始化失败:', e.message);
+      bloomEnabled = false;
+    }
+  }
+
+  function createStars() {
+    var starCount = 3000;
+    var positions = new Float32Array(starCount * 3);
+    var colors = new Float32Array(starCount * 3);
+    var sizes = new Float32Array(starCount);
+
+    for (var i = 0; i < starCount; i++) {
+      var radius = 400 + Math.random() * 300;
+      var theta = Math.random() * Math.PI * 2;
+      var phi = Math.random() * Math.PI;
+
+      positions[i * 3] = radius * Math.sin(phi) * Math.cos(theta);
+      positions[i * 3 + 1] = radius * Math.cos(phi);
+      positions[i * 3 + 2] = radius * Math.sin(phi) * Math.sin(theta);
+
+      var brightness = 0.4 + Math.random() * 0.6;
+      colors[i * 3] = brightness;
+      colors[i * 3 + 1] = brightness;
+      colors[i * 3 + 2] = brightness * 1.3;
+
+      sizes[i] = 0.3 + Math.random() * 0.8;
+    }
+
+    var geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+    var material = new THREE.PointsMaterial({
+      size: 0.6,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.9,
+      sizeAttenuation: true,
+      blending: THREE.AdditiveBlending
+    });
+
+    var stars = new THREE.Points(geometry, material);
+    scene.add(stars);
+  }
+
+  function createAtmosphere() {
+    // 外层光晕 - 非常柔和
+    var outerGeometry = new THREE.SphereGeometry(CONFIG.sphereRadius + 8, 64, 64);
+    var outerMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        glowColor: { value: new THREE.Color(CONFIG.atmosphereColor) },
+        viewVector: { value: camera.position.clone() }
+      },
+      vertexShader: `
+        uniform vec3 viewVector;
+        varying float intensity;
+        void main() {
+          vec3 vNormal = normalize(normalMatrix * normal);
+          vec3 vView = normalize(normalMatrix * viewVector);
+          intensity = pow(0.55 - dot(vNormal, vView), 2.0);
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 glowColor;
+        varying float intensity;
+        void main() {
+          vec3 glow = glowColor * intensity;
+          gl_FragColor = vec4(glow, intensity * 0.3);
+        }
+      `,
+      side: THREE.BackSide,
+      blending: THREE.AdditiveBlending,
+      transparent: true,
+      depthWrite: false
+    });
+    var outerGlow = new THREE.Mesh(outerGeometry, outerMaterial);
+    outerGlow.userData.type = 'atmosphere-outer';
+    atmosphereGroup.add(outerGlow);
+
+    // 内层微光 - 贴近球面
+    var innerGeometry = new THREE.SphereGeometry(CONFIG.sphereRadius + 1.5, 64, 64);
+    var innerMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        glowColor: { value: new THREE.Color(0x5588bb) },
+        viewVector: { value: camera.position.clone() }
+      },
+      vertexShader: `
+        uniform vec3 viewVector;
+        varying float intensity;
+        void main() {
+          vec3 vNormal = normalize(normalMatrix * normal);
+          vec3 vView = normalize(normalMatrix * viewVector);
+          intensity = pow(0.6 - dot(vNormal, vView), 2.5);
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 glowColor;
+        varying float intensity;
+        void main() {
+          vec3 glow = glowColor * intensity * 0.35;
+          gl_FragColor = vec4(glow, intensity * 0.15);
+        }
+      `,
+      side: THREE.BackSide,
+      blending: THREE.AdditiveBlending,
+      transparent: true,
+      depthWrite: false
+    });
+    var innerGlow = new THREE.Mesh(innerGeometry, innerMaterial);
+    innerGlow.userData.type = 'atmosphere-inner';
+    atmosphereGroup.add(innerGlow);
+  }
+
+  function setCameraPosition(betaDeg, alphaDeg, distance) {
+    var beta = (betaDeg * Math.PI) / 180;
+    var alpha = (alphaDeg * Math.PI) / 180;
+
+    camera.position.x = distance * Math.sin(alpha) * Math.sin(beta);
+    camera.position.y = distance * Math.cos(alpha);
+    camera.position.z = distance * Math.sin(alpha) * Math.cos(beta);
+    camera.lookAt(0, 0, 0);
+  }
+
+  function loadGeoJSON(callback) {
+    var geoUrl = 'https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json';
+
+    // 尝试 fetch 加载
+    fetch(geoUrl)
+      .then(function(res) { return res.json(); })
+      .then(function(data) {
+        chinaGeoJSON = data;
+        console.log('[ThreeMap] GeoJSON 加载成功 (fetch)');
+        callback();
+      })
+      .catch(function() {
+        // 降级到 JSONP
+        loadGeoJSONByJSONP(callback);
+      });
+  }
+
+  function loadGeoJSONByJSONP(callback) {
+    var callbackName = 'threeMapChinaCallback_' + Date.now();
+    var script = document.createElement('script');
+    var jsonpUrl = 'https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json?callback=' + callbackName;
+
+    window[callbackName] = function(data) {
+      chinaGeoJSON = data;
+      console.log('[ThreeMap] GeoJSON 加载成功 (JSONP)');
+      callback();
+      delete window[callbackName];
+      if (script.parentNode) {
+        script.parentNode.removeChild(script);
+      }
+    };
+
+    script.src = jsonpUrl;
+    script.onerror = function() {
+      console.error('[ThreeMap] GeoJSON JSONP 加载失败');
+      delete window[callbackName];
+      if (script.parentNode) {
+        script.parentNode.removeChild(script);
+      }
+    };
+
+    document.head.appendChild(script);
+  }
+
+  // 经纬度转球面坐标
+  function lngLatToSphere(lng, lat, radius) {
+    var lngRad = (lng * Math.PI) / 180;
+    var latRad = (lat * Math.PI) / 180;
+
+    var x = radius * Math.cos(latRad) * Math.sin(lngRad);
+    var y = radius * Math.sin(latRad);
+    var z = radius * Math.cos(latRad) * Math.cos(lngRad);
+
+    return new THREE.Vector3(x, y, z);
+  }
+
+  // 构建球面地图
+  function buildSphereMap() {
+    if (!chinaGeoJSON) return;
+
+    var features = chinaGeoJSON.features;
+    var provinceCount = 0;
+    var totalPolygons = 0;
+    provinceMeshes = [];
+
+    features.forEach(function(feature) {
+      var geometry = feature.geometry;
+      var name = feature.properties.name;
+
+      if (geometry.type === 'Polygon') {
+        var result = createProvinceMesh(geometry.coordinates[0], name, feature.properties);
+        if (result) provinceCount++;
+        totalPolygons++;
+      } else if (geometry.type === 'MultiPolygon') {
+        geometry.coordinates.forEach(function(polygon) {
+          var result = createProvinceMesh(polygon[0], name, feature.properties);
+          if (result) provinceCount++;
+          totalPolygons++;
+        });
+      }
+    });
+
+    console.log('[ThreeMap] 构建曲面:', provinceCount, '/' , totalPolygons, '个多边形（已过滤小岛）');
+    console.log('[ThreeMap] 省份网格:', provinceMeshes.length, '个');
+
+    // 添加球体底部（海洋部分）
+    createOceanBase();
+  }
+
+  // 创建悬停标签（高清精致版）
+  function createHoverLabel(text, lng, lat) {
+    var canvas = document.createElement('canvas');
+    var ctx = canvas.getContext('2d');
+    var dpr = 2; // 高清渲染
+    var fontSize = 14;
+    var paddingX = 14;
+    var paddingY = 8;
+
+    // 先测量文字宽度
+    ctx.font = '600 ' + fontSize + 'px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif';
+    var textWidth = ctx.measureText(text).width;
+    var canvasWidth = Math.ceil((textWidth + paddingX * 2) * dpr);
+    var canvasHeight = Math.ceil((fontSize + paddingY * 2) * dpr);
+    canvas.width = canvasWidth;
+    canvas.height = canvasHeight;
+
+    // 缩放坐标系以支持高清
+    ctx.scale(dpr, dpr);
+    ctx.font = '600 ' + fontSize + 'px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    var w = textWidth + paddingX * 2;
+    var h = fontSize + paddingY * 2;
+
+    // 背景：渐变 + 模糊感
+    var bgGradient = ctx.createLinearGradient(0, 0, 0, h);
+    bgGradient.addColorStop(0, 'rgba(25, 40, 65, 0.92)');
+    bgGradient.addColorStop(1, 'rgba(15, 25, 45, 0.92)');
+    ctx.fillStyle = bgGradient;
+    roundRect(ctx, 0, 0, w, h, 6);
+    ctx.fill();
+
+    // 顶部细线高光
+    ctx.strokeStyle = 'rgba(120, 170, 230, 0.45)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(8, 0.5);
+    ctx.lineTo(w - 8, 0.5);
+    ctx.stroke();
+
+    // 边框
+    ctx.strokeStyle = 'rgba(90, 140, 200, 0.3)';
+    ctx.lineWidth = 1;
+    roundRect(ctx, 0.5, 0.5, w - 1, h - 1, 6);
+    ctx.stroke();
+
+    // 文字阴影（发光感）
+    ctx.shadowColor = 'rgba(100, 160, 230, 0.5)';
+    ctx.shadowBlur = 6;
+    ctx.fillStyle = '#f0f6ff';
+    ctx.fillText(text, w / 2, h / 2 + 0.5);
+    ctx.shadowBlur = 0;
+
+    // 底部小箭头
+    ctx.fillStyle = 'rgba(15, 25, 45, 0.92)';
+    ctx.beginPath();
+    ctx.moveTo(w / 2 - 5, h - 0.5);
+    ctx.lineTo(w / 2 + 5, h - 0.5);
+    ctx.lineTo(w / 2, h + 4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(90, 140, 200, 0.3)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(w / 2 - 5, h - 0.5);
+    ctx.lineTo(w / 2, h + 4);
+    ctx.lineTo(w / 2 + 5, h - 0.5);
+    ctx.stroke();
+
+    var texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.needsUpdate = true;
+
+    var material = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false
+    });
+
+    var sprite = new THREE.Sprite(material);
+    var pos = lngLatToSphere(lng, lat, CONFIG.sphereRadius + CONFIG.mapHeight + 5);
+    sprite.position.copy(pos);
+
+    // 设置 Sprite 大小
+    var spriteHeight = 3.0;
+    var spriteWidth = (w / h) * spriteHeight;
+    sprite.scale.set(spriteWidth, spriteHeight, 1);
+
+    sprite.userData.type = 'hover-label';
+    sprite.userData.text = text;
+
+    return sprite;
+  }
+
+  // 设置悬停省份
+  function setHoveredProvince(mesh) {
+    // 恢复之前的
+    if (hoveredProvince && hoveredProvince !== mesh) {
+      var prev = hoveredProvince;
+      prev.material.emissiveIntensity = prev.userData.originalEmissiveIntensity;
+      prev.material.emissive = new THREE.Color(CONFIG.mapEmissive);
+    }
+
+    // 移除旧标签
+    if (hoverLabel) {
+      mapGroup.remove(hoverLabel);
+      hoverLabel = null;
+    }
+
+    hoveredProvince = mesh;
+
+    if (mesh) {
+      // 高亮当前省份
+      mesh.material.emissiveIntensity = 0.7;
+      mesh.material.emissive = new THREE.Color(0x2255aa);
+
+      // 创建标签（使用地理中心坐标）
+      if (mesh.userData.centerLng !== undefined && mesh.userData.centerLat !== undefined) {
+        hoverLabel = createHoverLabel(
+          mesh.userData.name,
+          mesh.userData.centerLng,
+          mesh.userData.centerLat
+        );
+        if (hoverLabel) mapGroup.add(hoverLabel);
+      }
+    }
+
+    // 更新鼠标样式
+    if (renderer && renderer.domElement) {
+      renderer.domElement.style.cursor = mesh ? 'pointer' : 'default';
+    }
+  }
+
+  // Canvas 圆角矩形
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+
+  // 创建海洋基底
+  function createOceanBase() {
+    // 海洋球体
+    var oceanGeometry = new THREE.SphereGeometry(CONFIG.sphereRadius - 0.5, 64, 64);
+    var oceanMaterial = new THREE.MeshStandardMaterial({
+      color: CONFIG.oceanColor,
+      emissive: 0x03070e,
+      emissiveIntensity: 0.2,
+      roughness: 0.9,
+      metalness: 0.05,
+      side: THREE.FrontSide,
+      transparent: true,
+      opacity: 0.85
+    });
+    var ocean = new THREE.Mesh(oceanGeometry, oceanMaterial);
+    ocean.receiveShadow = true;
+    ocean.userData.type = 'ocean';
+    mapGroup.add(ocean);
+
+    // 海洋网格线 - 极细淡灰色
+    var gridMaterial = new THREE.LineBasicMaterial({
+      color: 0x2a3a50,
+      transparent: true,
+      opacity: 0.18
+    });
+
+    // 纬线
+    for (var lat = -80; lat <= 80; lat += 20) {
+      var latPoints = [];
+      for (var lng = 0; lng <= 360; lng += 3) {
+        var pos = lngLatToSphere(lng - 180, lat, CONFIG.sphereRadius - 0.3);
+        latPoints.push(pos);
+      }
+      var latGeometry = new THREE.BufferGeometry().setFromPoints(latPoints);
+      var latLine = new THREE.Line(latGeometry, gridMaterial);
+      mapGroup.add(latLine);
+    }
+
+    // 经线
+    for (var lng = -180; lng < 180; lng += 20) {
+      var lngPoints = [];
+      for (var lat = -90; lat <= 90; lat += 3) {
+        var pos = lngLatToSphere(lng, lat, CONFIG.sphereRadius - 0.3);
+        lngPoints.push(pos);
+      }
+      var lngGeometry = new THREE.BufferGeometry().setFromPoints(lngPoints);
+      var lngLine = new THREE.Line(lngGeometry, gridMaterial);
+      mapGroup.add(lngLine);
+    }
+
+    // 底部柔化阴影（模拟悬浮效果）
+    createBottomShadow();
+  }
+
+  // 创建底部柔化阴影
+  function createBottomShadow() {
+    var shadowGeometry = new THREE.CircleGeometry(60, 48);
+    var shadowMaterial = new THREE.MeshBasicMaterial({
+      color: 0x000000,
+      transparent: true,
+      opacity: 0.25,
+      side: THREE.DoubleSide,
+      depthWrite: false
+    });
+    var shadow = new THREE.Mesh(shadowGeometry, shadowMaterial);
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.position.y = -CONFIG.sphereRadius - 2;
+    shadow.userData.type = 'bottom-shadow';
+    atmosphereGroup.add(shadow);
+  }
+
+  // 创建省份曲面网格（在球面上挤出）
+  function createProvinceMesh(coordinates, name, properties) {
+    var innerR = CONFIG.sphereRadius;
+    var outerR = CONFIG.sphereRadius + CONFIG.mapHeight;
+
+    // 计算地理中心（经纬度平均值）
+    var centerLng = 0;
+    var centerLat = 0;
+    for (var ci = 0; ci < coordinates.length - 1; ci++) {
+      centerLng += coordinates[ci][0];
+      centerLat += coordinates[ci][1];
+    }
+    centerLng /= (coordinates.length - 1);
+    centerLat /= (coordinates.length - 1);
+
+    // 收集外圈顶点（球面上）
+    var outerPoints = [];
+    for (var i = 0; i < coordinates.length - 1; i++) {
+      var lng = coordinates[i][0];
+      var lat = coordinates[i][1];
+      outerPoints.push(lngLatToSphere(lng, lat, outerR));
+    }
+
+    if (outerPoints.length < 3) return false;
+
+    // 过滤太小的多边形（小岛）
+    var bbox = getBoundingBox(outerPoints);
+    var bboxSize = Math.max(bbox.max.x - bbox.min.x, bbox.max.y - bbox.min.y, bbox.max.z - bbox.min.z);
+    if (bboxSize < 2) return false;
+
+    // 将3D点投影到局部2D平面（用于三角化）
+    var center = new THREE.Vector3();
+    for (var i = 0; i < outerPoints.length; i++) {
+      center.add(outerPoints[i]);
+    }
+    center.divideScalar(outerPoints.length);
+    center.normalize();
+
+    // 构建局部坐标系
+    var up = new THREE.Vector3(0, 1, 0);
+    if (Math.abs(center.dot(up)) > 0.9) {
+      up.set(1, 0, 0);
+    }
+    var tangent = new THREE.Vector3().crossVectors(up, center).normalize();
+    var bitangent = new THREE.Vector3().crossVectors(center, tangent).normalize();
+
+    // 投影到2D
+    var points2d = [];
+    for (var i = 0; i < outerPoints.length; i++) {
+      var p = outerPoints[i];
+      var local = new THREE.Vector3().subVectors(p, center.clone().multiplyScalar(outerR));
+      var u = local.dot(tangent);
+      var v = local.dot(bitangent);
+      points2d.push(new THREE.Vector2(u, v));
+    }
+
+    // 使用 Three.js 内置三角化
+    var faces;
+    try {
+      faces = THREE.ShapeUtils.triangulateShape(points2d, []);
+    } catch (e) {
+      console.warn('[ThreeMap] 三角化失败:', name, e.message);
+      return false;
+    }
+
+    if (!faces || faces.length === 0) return false;
+
+    // 构建几何体
+    var vertices = [];
+    var normals = [];
+    var indices = [];
+    var colorAttr = [];
+
+    var topColor = new THREE.Color(CONFIG.mapTopColor);
+    var sideColor = new THREE.Color(CONFIG.sideColor);
+
+    // 顶面顶点
+    var topStart = 0;
+    for (var i = 0; i < outerPoints.length; i++) {
+      var p = outerPoints[i];
+      vertices.push(p.x, p.y, p.z);
+      var n = p.clone().normalize();
+      normals.push(n.x, n.y, n.z);
+      colorAttr.push(topColor.r, topColor.g, topColor.b);
+    }
+
+    // 底面顶点（内球面上，不可见但为了完整性保留）
+    var bottomStart = outerPoints.length;
+    for (var i = 0; i < outerPoints.length; i++) {
+      var p = outerPoints[i];
+      var innerP = p.clone().normalize().multiplyScalar(innerR);
+      vertices.push(innerP.x, innerP.y, innerP.z);
+      var n = innerP.clone().normalize().negate();
+      normals.push(n.x, n.y, n.z);
+      colorAttr.push(sideColor.r * 0.4, sideColor.g * 0.4, sideColor.b * 0.4);
+    }
+
+    // 侧面顶点
+    var sideStart = bottomStart + outerPoints.length;
+    for (var i = 0; i < outerPoints.length; i++) {
+      var next = (i + 1) % outerPoints.length;
+      var v1 = outerPoints[i];
+      var v2 = outerPoints[next];
+      var tangent = new THREE.Vector3().subVectors(v2, v1).normalize();
+      var radial = v1.clone().normalize();
+      var sideNormal = new THREE.Vector3().crossVectors(tangent, radial).normalize();
+
+      // 上顶点 - 略深于顶面
+      vertices.push(v1.x, v1.y, v1.z);
+      normals.push(sideNormal.x, sideNormal.y, sideNormal.z);
+      colorAttr.push(sideColor.r * 1.4, sideColor.g * 1.4, sideColor.b * 1.4);
+
+      // 下顶点 - 更深
+      var innerP = v1.clone().normalize().multiplyScalar(innerR);
+      vertices.push(innerP.x, innerP.y, innerP.z);
+      normals.push(sideNormal.x, sideNormal.y, sideNormal.z);
+      colorAttr.push(sideColor.r, sideColor.g, sideColor.b);
+    }
+
+    // 顶面三角形索引
+    for (var i = 0; i < faces.length; i++) {
+      var face = faces[i];
+      indices.push(topStart + face[0], topStart + face[1], topStart + face[2]);
+    }
+
+    // 侧面三角形
+    for (var i = 0; i < outerPoints.length; i++) {
+      var next = (i + 1) % outerPoints.length;
+      var baseIdx = sideStart + i * 2;
+      var nextBaseIdx = sideStart + next * 2;
+      indices.push(baseIdx, nextBaseIdx, baseIdx + 1);
+      indices.push(nextBaseIdx, nextBaseIdx + 1, baseIdx + 1);
+    }
+
+    // 创建几何体
+    var geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colorAttr, 3));
+    geometry.setIndex(indices);
+
+    // 材质：顶点颜色区分顶面和侧面，整体哑光质感
+    var material = new THREE.MeshStandardMaterial({
+      vertexColors: THREE.VertexColors,
+      emissive: CONFIG.mapEmissive,
+      emissiveIntensity: 0.2,
+      roughness: 0.75,
+      metalness: 0.08,
+      side: THREE.FrontSide
+    });
+
+    var mesh = new THREE.Mesh(geometry, material);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.userData.name = name;
+    mesh.userData.type = 'province';
+    mesh.userData.properties = properties;
+    mesh.userData.originalEmissiveIntensity = 0.2;
+    mesh.userData.outerPoints = outerPoints;
+    mesh.userData.centerLng = centerLng;
+    mesh.userData.centerLat = centerLat;
+
+    mapGroup.add(mesh);
+    provinceMeshes.push(mesh);
+
+    // 边框线：淡蓝色微发光描边
+    createBorderLine(outerPoints, name);
+
+    return true;
+  }
+
+  // 计算点集包围盒
+  function getBoundingBox(points) {
+    var min = new THREE.Vector3(Infinity, Infinity, Infinity);
+    var max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+    for (var i = 0; i < points.length; i++) {
+      min.min(points[i]);
+      max.max(points[i]);
+    }
+    return { min: min, max: max };
+  }
+
+  // 创建省份边界线（淡蓝色微发光描边）
+  function createBorderLine(points, name) {
+    var geometry = new THREE.BufferGeometry().setFromPoints(points);
+    var material = new THREE.LineBasicMaterial({
+      color: CONFIG.borderColor,
+      transparent: true,
+      opacity: 0.7
+    });
+    var line = new THREE.Line(geometry, material);
+    line.userData.name = name;
+    line.userData.type = 'border';
+    mapGroup.add(line);
+  }
+
+  function addMarkers(routeData) {
+    if (!isReady) {
+      setTimeout(function() { addMarkers(routeData); }, 100);
+      return;
+    }
+
+    // 清空现有标记
+    markerMeshes.forEach(function(m) {
+      if (m.userData.isMarker) {
+        markersGroup.remove(m);
+        disposeObject(m);
+      }
+    });
+    markerMeshes = [];
+
+    routeData.forEach(function(route) {
+      var marker = createMarker(route);
+      if (marker) {
+        markersGroup.add(marker);
+        markerMeshes.push(marker);
+      }
+    });
+
+    console.log('[ThreeMap] 添加标记:', routeData.length, '个');
+  }
+
+  function createMarker(route) {
+    var markerGroup = new THREE.Group();
+    markerGroup.userData.isMarker = true;
+    markerGroup.userData.routeId = route.id;
+    markerGroup.userData.route = route;
+
+    var difficulty = route.difficulty || 1;
+    var baseRadius = 0.35 + difficulty * 0.15;
+
+    // 位置
+    var pos = lngLatToSphere(route.lng, route.lat, CONFIG.sphereRadius + CONFIG.mapHeight);
+    markerGroup.position.copy(pos);
+
+    // 朝向（垂直于球面）
+    var normal = pos.clone().normalize();
+    var quaternion = new THREE.Quaternion();
+    quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
+    markerGroup.applyQuaternion(quaternion);
+
+    // 存储缩放状态（用于平滑过渡）
+    markerGroup.userData.baseScale = 1.0;
+    markerGroup.userData.targetScale = 1.0;
+    markerGroup.userData.currentScale = 1.0;
+
+    // 1. 外圈细光环（外层扩散）
+    var outerRingGeometry = new THREE.RingGeometry(baseRadius * 1.2, baseRadius * 1.5, 32);
+    var outerRingMaterial = new THREE.MeshBasicMaterial({
+      color: CONFIG.markerColor,
+      transparent: true,
+      opacity: 0.3,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    var outerRing = new THREE.Mesh(outerRingGeometry, outerRingMaterial);
+    outerRing.rotation.x = -Math.PI / 2;
+    outerRing.position.y = 0.02;
+    outerRing.userData.isOuterRing = true;
+    markerGroup.add(outerRing);
+
+    // 2. 内圈亮环
+    var innerRingGeometry = new THREE.RingGeometry(baseRadius * 0.5, baseRadius * 0.9, 32);
+    var innerRingMaterial = new THREE.MeshBasicMaterial({
+      color: CONFIG.markerColor,
+      transparent: true,
+      opacity: 0.6,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    var innerRing = new THREE.Mesh(innerRingGeometry, innerRingMaterial);
+    innerRing.rotation.x = -Math.PI / 2;
+    innerRing.position.y = 0.05;
+    innerRing.userData.isInnerRing = true;
+    markerGroup.add(innerRing);
+
+    // 3. 中心实心亮点
+    var centerDotGeometry = new THREE.CircleGeometry(baseRadius * 0.35, 24);
+    var centerDotMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.95,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    var centerDot = new THREE.Mesh(centerDotGeometry, centerDotMaterial);
+    centerDot.rotation.x = -Math.PI / 2;
+    centerDot.position.y = 0.08;
+    markerGroup.add(centerDot);
+
+    // 4. 顶部微光球（不高，点缀一下）
+    var topSphereGeometry = new THREE.SphereGeometry(baseRadius * 0.25, 12, 12);
+    var topSphereMaterial = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      emissive: CONFIG.markerColor,
+      emissiveIntensity: 1.0,
+      roughness: 0.3,
+      metalness: 0.6
+    });
+    var topSphere = new THREE.Mesh(topSphereGeometry, topSphereMaterial);
+    topSphere.position.y = baseRadius * 0.8;
+    topSphere.castShadow = true;
+    markerGroup.add(topSphere);
+
+    // 5. 顶部微光晕
+    var topGlowGeometry = new THREE.SphereGeometry(baseRadius * 0.6, 12, 12);
+    var topGlowMaterial = new THREE.MeshBasicMaterial({
+      color: CONFIG.markerGlowColor,
+      transparent: true,
+      opacity: 0.15,
+      side: THREE.BackSide,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    var topGlow = new THREE.Mesh(topGlowGeometry, topGlowMaterial);
+    topGlow.position.y = baseRadius * 0.8;
+    topGlow.userData.isTopGlow = true;
+    markerGroup.add(topGlow);
+
+    return markerGroup;
+  }
+
+  function disposeObject(obj) {
+    if (obj.geometry) obj.geometry.dispose();
+    if (obj.material) {
+      if (Array.isArray(obj.material)) {
+        obj.material.forEach(function(m) { m.dispose(); });
+      } else {
+        obj.material.dispose();
+      }
+    }
+    if (obj.children) {
+      obj.children.forEach(disposeObject);
+    }
+  }
+
+  function onMouseMove(event) {
+    if (editMode && viewMode === 'mountain') return;
+    var rect = renderer.domElement.getBoundingClientRect();
+    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+    // 射线检测
+    raycaster.setFromCamera(mouse, camera);
+
+    // 先检测标记点
+    var markerIntersects = raycaster.intersectObjects(markersGroup.children, true);
+    if (markerIntersects.length > 0) {
+      var obj = markerIntersects[0].object;
+      while (obj && !obj.userData.isMarker) {
+        obj = obj.parent;
+      }
+      if (obj && obj.userData.isMarker) {
+        if (hoveredMarker !== obj) {
+          // 之前悬停的恢复
+          if (hoveredMarker) {
+            hoveredMarker.userData.targetScale = 1.0;
+          }
+          // 新的悬停放大
+          hoveredMarker = obj;
+          hoveredMarker.userData.targetScale = 1.4;
+        }
+      }
+      renderer.domElement.style.cursor = 'pointer';
+      // 悬停在标记上时，清除省份悬停
+      if (hoveredProvince) setHoveredProvince(null);
+      return;
+    } else {
+      // 没有悬停标记，恢复
+      if (hoveredMarker) {
+        hoveredMarker.userData.targetScale = 1.0;
+        hoveredMarker = null;
+      }
+    }
+
+    // 再检测省份
+    var provinceIntersects = raycaster.intersectObjects(provinceMeshes, false);
+    if (provinceIntersects.length > 0) {
+      var mesh = provinceIntersects[0].object;
+      if (mesh !== hoveredProvince) {
+        setHoveredProvince(mesh);
+      }
+      renderer.domElement.style.cursor = 'pointer';
+    } else {
+      if (hoveredProvince) setHoveredProvince(null);
+      renderer.domElement.style.cursor = 'grab';
+    }
+  }
+
+  function onMouseClick(event) {
+    if (event.defaultPrevented) return;
+    if (editMode && viewMode === 'mountain') return;
+
+    var rect = renderer.domElement.getBoundingClientRect();
+    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+    raycaster.setFromCamera(mouse, camera);
+
+    // 全局视图：点击标记触发回调（由回调统一处理飞入逻辑）
+    if (viewMode === 'global') {
+      var intersects = raycaster.intersectObjects(markersGroup.children, true);
+      if (intersects.length > 0) {
+        var obj = intersects[0].object;
+        while (obj && !obj.userData.routeId) {
+          obj = obj.parent;
+        }
+        if (obj && obj.userData.routeId && obj.userData.route) {
+          event.preventDefault();
+          if (onRouteClick) {
+            onRouteClick(obj.userData.route);
+          }
+        }
+      }
+    }
+  }
+
+  function onWindowResize() {
+    if (!container || !camera || !renderer) return;
+    camera.aspect = container.clientWidth / container.clientHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(container.clientWidth, container.clientHeight);
+    if (composer && bloomEnabled) {
+      composer.setSize(container.clientWidth, container.clientHeight);
+    }
+  }
+
+  function animate() {
+    animationId = requestAnimationFrame(animate);
+
+    // 更新控制器（相机动画期间或编辑模式中跳过，避免冲突）
+    if (controls && !isCameraAnimating && controls.enabled) {
+      controls.update();
+    }
+
+    // 更新大气层着色器的 viewVector
+    atmosphereGroup.children.forEach(function(child) {
+      if (child.material && child.material.uniforms && child.material.uniforms.viewVector) {
+        child.material.uniforms.viewVector.value.copy(camera.position);
+      }
+    });
+
+    // 标记动画：呼吸缩放 + 悬停放大平滑过渡
+    var time = Date.now() * 0.001;
+    markerMeshes.forEach(function(marker, index) {
+      // 平滑过渡到目标缩放
+      var current = marker.userData.currentScale || 1.0;
+      var target = marker.userData.targetScale || 1.0;
+      current += (target - current) * 0.15;
+      marker.userData.currentScale = current;
+
+      // 呼吸效果（在当前缩放上叠加）
+      var breathe = 1 + Math.sin(time * 0.8 + index * 0.5) * 0.05;
+      var totalScale = current * breathe;
+      marker.scale.set(totalScale, totalScale, totalScale);
+      
+      // 子元素的环和光晕独立动画
+      marker.children.forEach(function(child) {
+        if (child.userData.isOuterRing) {
+          var pulse = 1 + Math.sin(time * 1.2 + index * 0.7) * 0.1;
+          child.scale.set(1 / breathe * pulse, 1 / breathe * pulse, 1 / breathe * pulse);
+        }
+        if (child.userData.isInnerRing) {
+          var pulse2 = 1 + Math.sin(time * 1.5 + index * 0.3) * 0.06;
+          child.scale.set(1 / breathe * pulse2, 1 / breathe * pulse2, 1 / breathe * pulse2);
+        }
+        if (child.userData.isTopGlow) {
+          var glowPulse = 1 + Math.sin(time * 1.8 + index * 0.6) * 0.15;
+          child.scale.set(1 / breathe * glowPulse, 1 / breathe * glowPulse, 1 / breathe * glowPulse);
+        }
+      });
+    });
+
+    // 渲染
+    if (bloomEnabled && composer) {
+      composer.render();
+    } else {
+      renderer.render(scene, camera);
+    }
+  }
+
+  function setOnRouteClick(callback) {
+    onRouteClick = callback;
+  }
+
+  function flyTo(route, duration) {
+    duration = duration || 1500;
+    if (!controls || !route) return;
+    if (isCameraAnimating) return;
+    if (viewMode !== 'global') return;
+    isCameraAnimating = true;
+
+    var pos = lngLatToSphere(route.lng, route.lat, CONFIG.sphereRadius + CONFIG.mapHeight);
+
+    // 目标相机位置（在目标点上方一定距离，保持在球面外）
+    var targetDistance = CONFIG.sphereRadius * 1.6; // 球面半径的 1.6 倍，确保在外面
+    var normal = pos.clone().normalize();
+    var targetPos = normal.clone().multiplyScalar(targetDistance);
+
+    // 稍微偏移一下视角，不要正对（制造一点角度）
+    var offset = new THREE.Vector3(
+      normal.z * 15 - normal.y * 8,
+      normal.x * 8,
+      -normal.x * 15
+    );
+    targetPos.add(offset);
+    // 确保偏移后仍然在球面外
+    if (targetPos.length() < CONFIG.sphereRadius * 1.4) {
+      targetPos.normalize().multiplyScalar(CONFIG.sphereRadius * 1.4);
+    }
+
+    var startPos = camera.position.clone();
+    var startTarget = controls.target.clone();
+    // 目标看向点：不是球心，是标记点附近稍微偏球心的位置
+    var endTarget = pos.clone().multiplyScalar(0.3);
+    var startTime = Date.now();
+
+    function animateFly() {
+      var elapsed = Date.now() - startTime;
+      var t = Math.min(elapsed / duration, 1);
+      var easeT = 1 - Math.pow(1 - t, 3);
+
+      camera.position.lerpVectors(startPos, targetPos, easeT);
+      controls.target.lerpVectors(startTarget, endTarget, easeT);
+      camera.lookAt(controls.target);
+
+      if (t < 1) {
+        requestAnimationFrame(animateFly);
+      } else {
+        camera.position.copy(targetPos);
+        controls.target.copy(endTarget);
+        camera.lookAt(controls.target);
+        isCameraAnimating = false;
+      }
+    }
+
+    animateFly();
+  }
+
+  function resetView() {
+    if (!controls) return;
+    if (isCameraAnimating) return;
+    if (viewMode !== 'global') return;
+    isCameraAnimating = true;
+
+    var endPos = new THREE.Vector3();
+    var beta = (CONFIG.cameraBeta * Math.PI) / 180;
+    var alpha = (CONFIG.cameraAlpha * Math.PI) / 180;
+    endPos.x = CONFIG.cameraDistance * Math.sin(alpha) * Math.sin(beta);
+    endPos.y = CONFIG.cameraDistance * Math.cos(alpha);
+    endPos.z = CONFIG.cameraDistance * Math.sin(alpha) * Math.cos(beta);
+
+    var targetPos = new THREE.Vector3(0, 0, 0);
+    var startPos = camera.position.clone();
+    var startTarget = controls.target.clone();
+    var startTime = Date.now();
+    var duration = 1200;
+
+    function animateReset() {
+      var elapsed = Date.now() - startTime;
+      var t = Math.min(elapsed / duration, 1);
+      var easeT = 1 - Math.pow(1 - t, 3);
+
+      camera.position.lerpVectors(startPos, endPos, easeT);
+      controls.target.lerpVectors(startTarget, targetPos, easeT);
+      camera.lookAt(controls.target);
+
+      if (t < 1) {
+        requestAnimationFrame(animateReset);
+      } else {
+        camera.position.copy(endPos);
+        controls.target.copy(targetPos);
+        camera.lookAt(controls.target);
+        isCameraAnimating = false;
+      }
+    }
+
+    animateReset();
+  }
+
+  // ========== 山峰地形模式 ==========
+
+  // 简化的柏林噪声（用于地形起伏）
+  function simpleNoise(x, y, seed) {
+    var n = Math.sin(x * 12.9898 + y * 78.233 + seed * 37.719) * 43758.5453;
+    return n - Math.floor(n);
+  }
+
+  function smoothNoise(x, y, seed) {
+    var xInt = Math.floor(x);
+    var yInt = Math.floor(y);
+    var xFrac = x - xInt;
+    var yFrac = y - yInt;
+    var v00 = simpleNoise(xInt, yInt, seed);
+    var v10 = simpleNoise(xInt + 1, yInt, seed);
+    var v01 = simpleNoise(xInt, yInt + 1, seed);
+    var v11 = simpleNoise(xInt + 1, yInt + 1, seed);
+    var sx = xFrac * xFrac * (3 - 2 * xFrac);
+    var sy = yFrac * yFrac * (3 - 2 * yFrac);
+    var v0 = v00 * (1 - sx) + v10 * sx;
+    var v1 = v01 * (1 - sx) + v11 * sx;
+    return v0 * (1 - sy) + v1 * sy;
+  }
+
+  // 多层噪声
+  function fbmNoise(x, y, seed, octaves) {
+    octaves = octaves || 4;
+    var value = 0;
+    var amplitude = 1;
+    var frequency = 1;
+    var maxValue = 0;
+    for (var i = 0; i < octaves; i++) {
+      value += smoothNoise(x * frequency, y * frequency, seed + i * 100) * amplitude;
+      maxValue += amplitude;
+      amplitude *= 0.5;
+      frequency *= 2;
+    }
+    return value / maxValue;
+  }
+
+  // 获取某点的地形高度
+  function getTerrainHeight(x, y, terrain, seed) {
+    if (!terrain || !terrain.peaks) return 0;
+    var baseHeight = terrain.baseHeight || 1000;
+    var height = 0;
+    var maxPeakHeight = 0;
+    for (var pi = 0; pi < terrain.peaks.length; pi++) {
+      if (terrain.peaks[pi].height > maxPeakHeight) maxPeakHeight = terrain.peaks[pi].height;
+    }
+    var terrainHeight = maxPeakHeight - baseHeight;
+    var noiseVal = fbmNoise(x * 4, y * 4, seed, 5);
+    height = noiseVal * terrainHeight * 0.25;
+    for (var i = 0; i < terrain.peaks.length; i++) {
+      var peak = terrain.peaks[i];
+      var dx = x - peak.x;
+      var dy = y - peak.y;
+      var dist = Math.sqrt(dx * dx + dy * dy);
+      var peakWidth = 0.08 + (peak.height - baseHeight) / 15000;
+      var peakInfluence = Math.exp(-(dist * dist) / (peakWidth * peakWidth));
+      var peakHeight = peak.height - baseHeight - noiseVal * terrainHeight * 0.25;
+      height += peakInfluence * peakHeight;
+    }
+    var detailNoise = fbmNoise(x * 12, y * 12, seed + 50, 3);
+    height += (detailNoise - 0.5) * (terrainHeight * 0.06);
+    return baseHeight + height;
+  }
+
+  // 获取地形颜色（基于高度）
+  function getTerrainColor(height, terrain, baseHeight, maxHeight) {
+    var t = (height - baseHeight) / (maxHeight - baseHeight);
+    t = Math.max(0, Math.min(1, t));
+    var style = terrain.style || 'alpine_meadow';
+    var color = new THREE.Color();
+    if (style === 'snow_mountain') {
+      if (t < 0.25) {
+        color.setHSL(0.08, 0.15, 0.22 + t * 0.08);
+      } else if (t < 0.55) {
+        var tt = (t - 0.25) / 0.3;
+        color.setHSL(0.08, 0.12 - tt * 0.08, 0.3 + tt * 0.2);
+      } else {
+        color.setHSL(0.6, 0.08, 0.75 + (t - 0.55) * 0.2);
+      }
+    } else if (style === 'rocky_alpine') {
+      if (t < 0.4) {
+        color.setHSL(0.08, 0.08, 0.25 + t * 0.08);
+      } else if (t < 0.8) {
+        color.setHSL(0.05, 0.05, 0.33 + (t - 0.4) * 0.17);
+      } else {
+        color.setHSL(0.6, 0.08, 0.65 + (t - 0.8) * 0.2);
+      }
+    } else if (style === 'grassland') {
+      if (t < 0.45) {
+        color.setHSL(0.27, 0.32, 0.22 + t * 0.12);
+      } else if (t < 0.8) {
+        var tt = (t - 0.45) / 0.35;
+        color.setHSL(0.25 - tt * 0.05, 0.28 - tt * 0.15, 0.34 + tt * 0.08);
+      } else {
+        color.setHSL(0.08, 0.08, 0.48);
+      }
+    } else if (style === 'highland') {
+      if (t < 0.25) {
+        color.setHSL(0.3, 0.22, 0.28 + t * 0.08);
+      } else if (t < 0.55) {
+        var tt = (t - 0.25) / 0.3;
+        color.setHSL(0.12 - tt * 0.07, 0.12 - tt * 0.07, 0.36 + tt * 0.08);
+      } else if (t < 0.8) {
+        var tt2 = (t - 0.55) / 0.25;
+        color.setHSL(0.05, 0.06, 0.44 + tt2 * 0.12);
+      } else {
+        color.setHSL(0.6, 0.08, 0.82);
+      }
+    } else if (style === 'industrial') {
+      color.setHSL(0.08, 0.12, 0.2 + t * 0.15);
+    } else {
+      if (t < 0.5) {
+        color.setHSL(0.3, 0.25, 0.28 + t * 0.1);
+      } else {
+        color.setHSL(0.1, 0.08, 0.38 + (t - 0.5) * 0.25);
+      }
+    }
+    return color;
+  }
+
+  // 创建山峰地形
+  function createMountainTerrain(route) {
+    var group = new THREE.Group();
+    group.name = 'mountain_terrain';
+    if (!route.terrain) return group;
+    var terrain = route.terrain;
+    var seed = route.lng * 1000 + route.lat;
+    var baseHeight = terrain.baseHeight || 1000;
+    var maxHeight = baseHeight;
+    for (var p = 0; p < terrain.peaks.length; p++) {
+      if (terrain.peaks[p].height > maxHeight) maxHeight = terrain.peaks[p].height;
+    }
+    var size = 60;
+    var segments = 128;
+    var heightScale = 0.018;
+
+    var savedMod = loadTerrainMod(route.id);
+
+    var geometry = new THREE.PlaneGeometry(size, size, segments, segments);
+    geometry.rotateX(-Math.PI / 2);
+    var positions = geometry.attributes.position;
+    var colors = new Float32Array(positions.count * 3);
+    baseHeights = new Float32Array(positions.count);
+
+    for (var i = 0; i < positions.count; i++) {
+      var x = positions.getX(i);
+      var z = positions.getZ(i);
+      var nx = (x + size / 2) / size;
+      var nz = (z + size / 2) / size;
+      var h = getTerrainHeight(nx, nz, terrain, seed);
+      var scaledH = (h - baseHeight) * heightScale;
+      if (savedMod) {
+        var mi = Math.round(nx * segments);
+        var mj = Math.round(nz * segments);
+        var idx = mj * (segments + 1) + mi;
+        if (idx >= 0 && idx < savedMod.deltas.length) {
+          scaledH += savedMod.deltas[idx];
+        }
+      }
+      baseHeights[i] = scaledH;
+      positions.setY(i, scaledH);
+      var terrainH = (scaledH / heightScale) + baseHeight;
+      var color = getTerrainColor(terrainH, terrain, baseHeight, maxHeight);
+      colors[i * 3] = color.r;
+      colors[i * 3 + 1] = color.g;
+      colors[i * 3 + 2] = color.b;
+    }
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.computeVertexNormals();
+
+    var material = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.85,
+      metalness: 0.05
+    });
+    var mesh = new THREE.Mesh(geometry, material);
+    mesh.receiveShadow = true;
+    mesh.castShadow = true;
+    mesh.userData.isTerrain = true;
+    mesh.userData.routeId = route.id;
+    mesh.userData.segments = segments;
+    mesh.userData.size = size;
+    mesh.userData.heightScale = heightScale;
+    group.add(mesh);
+    terrainMesh = mesh;
+
+    // 山峰标记
+    for (var pi = 0; pi < terrain.peaks.length; pi++) {
+      var peak = terrain.peaks[pi];
+      var peakX = (peak.x - 0.5) * size;
+      var peakZ = (peak.y - 0.5) * size;
+      var peakH = getTerrainHeight(peak.x, peak.y, terrain, seed);
+      var peakY = (peakH - baseHeight) * heightScale;
+
+      var peakGeo = new THREE.ConeGeometry(0.7, 2.2, 8);
+      var peakMat = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        emissive: 0x4488ff,
+        emissiveIntensity: 0.3,
+        roughness: 0.3
+      });
+      var peakMesh = new THREE.Mesh(peakGeo, peakMat);
+      peakMesh.position.set(peakX, peakY + 1.2, peakZ);
+      peakMesh.userData.isPeak = true;
+      peakMesh.userData.peakName = peak.name;
+      peakMesh.userData.peakHeight = peak.height;
+      group.add(peakMesh);
+
+      // 峰顶标签
+      var lc = document.createElement('canvas');
+      var lctx = lc.getContext('2d');
+      lc.width = 256;
+      lc.height = 64;
+      lctx.font = 'bold 22px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif';
+      lctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+      lctx.textAlign = 'center';
+      lctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+      lctx.shadowBlur = 6;
+      lctx.fillText(peak.name, 128, 26);
+      lctx.font = '16px -apple-system, "PingFang SC", sans-serif';
+      lctx.fillStyle = 'rgba(150, 200, 255, 0.9)';
+      lctx.fillText(peak.height + 'm', 128, 50);
+      var lt = new THREE.CanvasTexture(lc);
+      var lm = new THREE.SpriteMaterial({ map: lt, transparent: true, depthTest: false, depthWrite: false });
+      var ls = new THREE.Sprite(lm);
+      ls.position.set(peakX, peakY + 5, peakZ);
+      ls.scale.set(6, 1.5, 1);
+      group.add(ls);
+    }
+
+    // 徒步行走路线
+    if (terrain.trailPoints && terrain.trailPoints.length > 1) {
+      var ctrlPts2D = [];
+      for (var ti = 0; ti < terrain.trailPoints.length; ti++) {
+        var tp = terrain.trailPoints[ti];
+        ctrlPts2D.push(new THREE.Vector3(tp.x, 0, tp.y));
+      }
+      var curve2D = new THREE.CatmullRomCurve3(ctrlPts2D, false, 'catmullrom', 0.1);
+      var sampleCount = Math.max(100, terrain.trailPoints.length * 25);
+      var groundOffset = 0.35;
+      var trailPoints = [];
+      for (var si = 0; si <= sampleCount; si++) {
+        var t = si / sampleCount;
+        var pt = curve2D.getPoint(t);
+        var ux = pt.x;
+        var uz = pt.z;
+        var sx = (ux - 0.5) * size;
+        var sz = (uz - 0.5) * size;
+        var sh = getTerrainHeight(ux, uz, terrain, seed);
+        var sy = (sh - baseHeight) * heightScale + groundOffset;
+        trailPoints.push(new THREE.Vector3(sx, sy, sz));
+      }
+      var trailCurve = new THREE.CatmullRomCurve3(trailPoints, false, 'catmullrom', 0.0);
+      var tubeGeo = new THREE.TubeGeometry(trailCurve, 280, 0.12, 6, false);
+      var tubeMat = new THREE.MeshBasicMaterial({
+        color: 0xffcc44,
+        transparent: true,
+        opacity: 0.95,
+        depthWrite: false
+      });
+      var tubeMesh = new THREE.Mesh(tubeGeo, tubeMat);
+      tubeMesh.renderOrder = 999;
+      tubeMesh.userData.isTrail = true;
+      group.add(tubeMesh);
+      var glowGeo = new THREE.TubeGeometry(trailCurve, 280, 0.32, 6, false);
+      var glowMat = new THREE.MeshBasicMaterial({
+        color: 0xffdd66,
+        transparent: true,
+        opacity: 0.18,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      });
+      var glowMesh = new THREE.Mesh(glowGeo, glowMat);
+      glowMesh.renderOrder = 998;
+      glowMesh.userData.isTrail = true;
+      group.add(glowMesh);
+
+      // 路线点
+      for (var ti2 = 0; ti2 < terrain.trailPoints.length; ti2++) {
+        var tp2 = terrain.trailPoints[ti2];
+        var tpx = (tp2.x - 0.5) * size;
+        var tpz = (tp2.y - 0.5) * size;
+        var tph = getTerrainHeight(tp2.x, tp2.y, terrain, seed);
+        var tpy = (tph - baseHeight) * heightScale + groundOffset + 0.2;
+        var dotGeo = new THREE.SphereGeometry(0.18, 12, 12);
+        var dotMat = new THREE.MeshStandardMaterial({
+          color: 0xffcc44,
+          emissive: 0xffaa00,
+          emissiveIntensity: 1.0,
+          roughness: 0.2
+        });
+        var dotMesh = new THREE.Mesh(dotGeo, dotMat);
+        dotMesh.position.set(tpx, tpy, tpz);
+        dotMesh.userData.isTrailDot = true;
+        group.add(dotMesh);
+        if (tp2.name) {
+          var tplc = document.createElement('canvas');
+          var tplctx = tplc.getContext('2d');
+          tplc.width = 200;
+          tplc.height = 48;
+          tplctx.font = 'bold 17px -apple-system, "PingFang SC", sans-serif';
+          tplctx.fillStyle = 'rgba(255, 220, 150, 0.95)';
+          tplctx.textAlign = 'center';
+          tplctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+          tplctx.shadowBlur = 4;
+          tplctx.fillText(tp2.name, 100, 28);
+          var tplt = new THREE.CanvasTexture(tplc);
+          var tplm = new THREE.SpriteMaterial({ map: tplt, transparent: true, depthTest: false, depthWrite: false });
+          var tpls = new THREE.Sprite(tplm);
+          tpls.position.set(tpx, tpy + 2, tpz);
+          tpls.scale.set(4, 1, 1);
+          tpls.userData.isTrailLabel = true;
+          group.add(tpls);
+        }
+      }
+    }
+
+    // 营地标记
+    if (terrain.camps) {
+      for (var ci = 0; ci < terrain.camps.length; ci++) {
+        var camp = terrain.camps[ci];
+        var cx = (camp.x - 0.5) * size;
+        var cz = (camp.y - 0.5) * size;
+        var ch = getTerrainHeight(camp.x, camp.y, terrain, seed);
+        var cy = (ch - baseHeight) * heightScale + 0.3;
+        var tentGeo = new THREE.ConeGeometry(0.7, 1.1, 4);
+        var tentMat = new THREE.MeshStandardMaterial({
+          color: 0x66ff88,
+          emissive: 0x228833,
+          emissiveIntensity: 0.4,
+          roughness: 0.6
+        });
+        var tentMesh = new THREE.Mesh(tentGeo, tentMat);
+        tentMesh.position.set(cx, cy + 0.55, cz);
+        tentMesh.rotation.y = Math.PI / 4;
+        tentMesh.userData.isCamp = true;
+        group.add(tentMesh);
+        if (camp.name) {
+          var clc = document.createElement('canvas');
+          var clctx = clc.getContext('2d');
+          clc.width = 180;
+          clc.height = 40;
+          clctx.font = 'bold 15px -apple-system, "PingFang SC", sans-serif';
+          clctx.fillStyle = 'rgba(120, 255, 150, 0.95)';
+          clctx.textAlign = 'center';
+          clctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+          clctx.shadowBlur = 4;
+          clctx.fillText(camp.name, 90, 25);
+          var clt = new THREE.CanvasTexture(clc);
+          var clm = new THREE.SpriteMaterial({ map: clt, transparent: true, depthTest: false, depthWrite: false });
+          var cls = new THREE.Sprite(clm);
+          cls.position.set(cx, cy + 2.2, cz);
+          cls.scale.set(3.5, 0.8, 1);
+          cls.userData.isCampLabel = true;
+          group.add(cls);
+        }
+      }
+    }
+    return group;
+  }
+
+  // 创建返回按钮
+  function createBackButton() {
+    var btn = document.createElement('div');
+    btn.id = 'mountain-back-btn';
+    btn.style.cssText = 'position:fixed;top:20px;left:20px;z-index:500;padding:10px 20px;background:rgba(15,25,45,0.92);border:1px solid rgba(100,150,200,0.4);border-radius:8px;color:#c8d8f0;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;font-size:14px;cursor:pointer;display:none;backdrop-filter:blur(10px);transition:all 0.3s;box-shadow:0 4px 20px rgba(0,0,0,0.5);';
+    btn.innerHTML = '← 返回全国地图';
+    btn.addEventListener('mouseenter', function() {
+      btn.style.background = 'rgba(30, 50, 80, 0.95)';
+      btn.style.borderColor = 'rgba(120, 180, 240, 0.6)';
+      btn.style.color = '#e8f0ff';
+    });
+    btn.addEventListener('mouseleave', function() {
+      btn.style.background = 'rgba(15, 25, 45, 0.92)';
+      btn.style.borderColor = 'rgba(100, 150, 200, 0.4)';
+      btn.style.color = '#c8d8f0';
+    });
+    btn.addEventListener('click', function() {
+      exitMountainMode();
+    });
+    document.body.appendChild(btn);
+    return btn;
+  }
+
+  // 进入山峰模式
+  function enterMountainMode(route) {
+    if (!container || !route || !route.terrain) return;
+    if (isCameraAnimating) return;
+    if (viewMode === 'mountain' && currentMountainRoute && currentMountainRoute.id === route.id) return;
+    isCameraAnimating = true;
+    currentMountainRoute = route;
+    viewMode = 'mountain';
+    workingTrailPoints = null;
+    selectedTrailIndex = -1;
+    isDraggingTrail = false;
+    if (!backButton) backButton = createBackButton();
+    backButton.style.display = 'block';
+    if (!editEntryBtn) createEditEntryButton();
+    editEntryBtn.style.display = 'block';
+
+    if (mountainGroup) {
+      scene.remove(mountainGroup);
+      mountainGroup.traverse(function(obj) {
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) {
+          if (obj.material.map) obj.material.map.dispose();
+          obj.material.dispose();
+        }
+      });
+    }
+    if (trailHandlesGroup) {
+      scene.remove(trailHandlesGroup);
+      trailHandlesGroup.traverse(function(obj) {
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) {
+          if (obj.material.map) obj.material.map.dispose();
+          obj.material.dispose();
+        }
+      });
+      trailHandlesGroup = null;
+    }
+    mountainGroup = createMountainTerrain(route);
+    mountainGroup.visible = false;
+    scene.add(mountainGroup);
+
+    // 隐藏全局元素
+    mapGroup.visible = false;
+    markersGroup.visible = false;
+    atmosphereGroup.visible = false;
+
+    var terrain = route.terrain;
+    var size = 60;
+    var startPos = camera.position.clone();
+    var startTarget = controls.target.clone();
+
+    mountainGroup.position.set(0, 0, 0);
+    mountainGroup.visible = true;
+    mountainGroup.scale.set(0.01, 0.01, 0.01);
+
+    var finalCamPos = new THREE.Vector3(50, 42, 50);
+    var finalLookAt = new THREE.Vector3(0, 4, 0);
+
+    var startTime = Date.now();
+    var duration = 2200;
+    controls.enabled = false;
+
+    function animateEnter() {
+      var elapsed = Date.now() - startTime;
+      var t = Math.min(elapsed / duration, 1);
+      var easeT = 1 - Math.pow(1 - t, 3);
+      camera.position.lerpVectors(startPos, finalCamPos, easeT);
+      controls.target.lerpVectors(startTarget, finalLookAt, easeT);
+      camera.lookAt(controls.target);
+      var scaleT = Math.min(t * 1.6, 1);
+      var scaleEase = 1 - Math.pow(1 - scaleT, 4);
+      var s = 0.01 + scaleEase * 0.99;
+      mountainGroup.scale.set(s, s, s);
+      if (t < 1) {
+        requestAnimationFrame(animateEnter);
+      } else {
+        mountainGroup.scale.set(1, 1, 1);
+        camera.position.copy(finalCamPos);
+        controls.target.copy(finalLookAt);
+        camera.lookAt(controls.target);
+        controls.minDistance = 20;
+        controls.maxDistance = 150;
+        controls.minPolarAngle = Math.PI * 0.08;
+        controls.maxPolarAngle = Math.PI / 2 - 0.05;
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.1;
+        controls.update();
+        controls.enabled = true;
+        isCameraAnimating = false;
+        var finalDist = camera.position.distanceTo(controls.target);
+        console.log('[DEBUG] 飞入结束 | 相机位置:', camera.position.x.toFixed(1), camera.position.y.toFixed(1), camera.position.z.toFixed(1),
+          '| target:', controls.target.x.toFixed(1), controls.target.y.toFixed(1), controls.target.z.toFixed(1),
+          '| 距离:', finalDist.toFixed(1));
+      }
+    }
+    animateEnter();
+  }
+
+  // ========== 地形编辑器 ==========
+  var STORAGE_KEY_PREFIX = 'taillog_terrain_mod_';
+
+  function getStorageKey(routeId) {
+    return STORAGE_KEY_PREFIX + routeId;
+  }
+
+  function loadTerrainMod(routeId) {
+    try {
+      var raw = localStorage.getItem(getStorageKey(routeId));
+      if (!raw) return null;
+      var data = JSON.parse(raw);
+      if (data && data.segments && data.deltas) return data;
+      return null;
+    } catch(e) { return null; }
+  }
+
+  function saveTerrainMod() {
+    if (!terrainMesh || !currentMountainRoute) return;
+    var positions = terrainMesh.geometry.attributes.position;
+    var segments = terrainMesh.userData.segments;
+    var deltas = new Array(positions.count);
+    for (var i = 0; i < positions.count; i++) {
+      deltas[i] = positions.getY(i) - baseHeights[i];
+    }
+    var data = { segments: segments, deltas: deltas };
+    try {
+      localStorage.setItem(getStorageKey(currentMountainRoute.id), JSON.stringify(data));
+      showEditorToast('地形已保存');
+    } catch(e) {
+      showEditorToast('保存失败');
+    }
+  }
+
+  function resetTerrainMod() {
+    if (!terrainMesh || !currentMountainRoute) return;
+    var positions = terrainMesh.geometry.attributes.position;
+    var colors = terrainMesh.geometry.attributes.color;
+    var route = currentMountainRoute;
+    var terrain = route.terrain;
+    var seed = route.lng * 1000 + route.lat;
+    var baseHeight = terrain.baseHeight || 1000;
+    var maxHeight = baseHeight;
+    for (var p = 0; p < terrain.peaks.length; p++) {
+      if (terrain.peaks[p].height > maxHeight) maxHeight = terrain.peaks[p].height;
+    }
+    var size = terrainMesh.userData.size;
+    var heightScale = terrainMesh.userData.heightScale;
+    var segments = terrainMesh.userData.segments;
+    for (var i = 0; i < positions.count; i++) {
+      var x = positions.getX(i);
+      var z = positions.getZ(i);
+      var nx = (x + size / 2) / size;
+      var nz = (z + size / 2) / size;
+      var h = getTerrainHeight(nx, nz, terrain, seed);
+      var scaledH = (h - baseHeight) * heightScale;
+      positions.setY(i, scaledH);
+      baseHeights[i] = scaledH;
+      var terrainH = (scaledH / heightScale) + baseHeight;
+      var color = getTerrainColor(terrainH, terrain, baseHeight, maxHeight);
+      colors.setXYZ(i, color.r, color.g, color.b);
+    }
+    positions.needsUpdate = true;
+    colors.needsUpdate = true;
+    terrainMesh.geometry.computeVertexNormals();
+    try { localStorage.removeItem(getStorageKey(currentMountainRoute.id)); } catch(e) {}
+    rebuildTrailsAndMarks();
+    showEditorToast('地形已重置');
+  }
+
+  function saveAllMods() {
+    if (!currentMountainRoute) return;
+    var data = {};
+    if (terrainMesh) {
+      var positions = terrainMesh.geometry.attributes.position;
+      var segments = terrainMesh.userData.segments;
+      var deltas = new Array(positions.count);
+      for (var i = 0; i < positions.count; i++) {
+        deltas[i] = positions.getY(i) - baseHeights[i];
+      }
+      data.segments = segments;
+      data.deltas = deltas;
+    }
+    if (workingTrailPoints) {
+      data.trailPoints = workingTrailPoints.map(function(p) {
+        return { x: p.x, y: p.y, name: p.name };
+      });
+    }
+    try {
+      localStorage.setItem(getStorageKey(currentMountainRoute.id), JSON.stringify(data));
+      showEditorToast('地形和路径已保存');
+    } catch(e) {
+      showEditorToast('保存失败');
+    }
+  }
+
+  function resetAllMods() {
+    if (!currentMountainRoute) return;
+    if (terrainMesh) {
+      var positions = terrainMesh.geometry.attributes.position;
+      var colors = terrainMesh.geometry.attributes.color;
+      var route = currentMountainRoute;
+      var terrain = route.terrain;
+      var seed = route.lng * 1000 + route.lat;
+      var baseHeight = terrain.baseHeight || 1000;
+      var maxHeight = baseHeight;
+      for (var p = 0; p < terrain.peaks.length; p++) {
+        if (terrain.peaks[p].height > maxHeight) maxHeight = terrain.peaks[p].height;
+      }
+      var size = terrainMesh.userData.size;
+      var heightScale = terrainMesh.userData.heightScale;
+      var segments = terrainMesh.userData.segments;
+      for (var i = 0; i < positions.count; i++) {
+        var x = positions.getX(i);
+        var z = positions.getZ(i);
+        var nx = (x + size / 2) / size;
+        var nz = (z + size / 2) / size;
+        var h = getTerrainHeight(nx, nz, terrain, seed);
+        var scaledH = (h - baseHeight) * heightScale;
+        positions.setY(i, scaledH);
+        baseHeights[i] = scaledH;
+        var terrainH = (scaledH / heightScale) + baseHeight;
+        var color = getTerrainColor(terrainH, terrain, baseHeight, maxHeight);
+        colors.setXYZ(i, color.r, color.g, color.b);
+      }
+      positions.needsUpdate = true;
+      colors.needsUpdate = true;
+      terrainMesh.geometry.computeVertexNormals();
+    }
+    workingTrailPoints = null;
+    selectedTrailIndex = -1;
+    isDraggingTrail = false;
+    try { localStorage.removeItem(getStorageKey(currentMountainRoute.id)); } catch(e) {}
+    rebuildTrailRender();
+    showEditorToast('已重置为默认');
+  }
+
+  function applyBrush(worldPoint) {
+    if (!terrainMesh || !editMode) return;
+    var positions = terrainMesh.geometry.attributes.position;
+    var colors = terrainMesh.geometry.attributes.color;
+    var size = terrainMesh.userData.size;
+    var segs = terrainMesh.userData.segments;
+    var dir = editTool === 'raise' ? 1 : editTool === 'lower' ? -1 : 0;
+    if (dir === 0 && editTool !== 'smooth') return;
+    var bx = worldPoint.x;
+    var bz = worldPoint.z;
+    var strength = editBrushStrength * 0.5;
+    var radius = editBrushSize;
+    var radiusSq = radius * radius;
+    var changed = false;
+    for (var i = 0; i < positions.count; i++) {
+      var vx = positions.getX(i);
+      var vz = positions.getZ(i);
+      var dx = vx - bx;
+      var dz = vz - bz;
+      var distSq = dx * dx + dz * dz;
+      if (distSq < radiusSq) {
+        var dist = Math.sqrt(distSq);
+        var falloff = 1.0 - dist / radius;
+        falloff = falloff * falloff * (3 - 2 * falloff);
+        var dy = 0;
+        if (editTool === 'smooth') {
+          var avgY = 0; var cnt = 0;
+          var row = Math.floor(i / (segs + 1));
+          var col = i % (segs + 1);
+          for (var dr = -1; dr <= 1; dr++) for (var dc = -1; dc <= 1; dc++) {
+            var nr = row + dr; var nc = col + dc;
+            if (nr >= 0 && nr <= segs && nc >= 0 && nc <= segs) {
+              avgY += positions.getY(nr * (segs + 1) + nc); cnt++;
+            }
+          }
+          avgY /= cnt;
+          dy = (avgY - positions.getY(i)) * falloff * 0.5;
+        } else {
+          dy = dir * strength * falloff;
+        }
+        positions.setY(i, positions.getY(i) + dy);
+        changed = true;
+      }
+    }
+    if (changed) {
+      positions.needsUpdate = true;
+      terrainMesh.geometry.computeVertexNormals();
+      updateTerrainColors();
+    }
+  }
+
+  function updateTerrainColors() {
+    if (!terrainMesh || !currentMountainRoute) return;
+    var positions = terrainMesh.geometry.attributes.position;
+    var colors = terrainMesh.geometry.attributes.color;
+    var terrain = currentMountainRoute.terrain;
+    var baseHeight = terrain.baseHeight || 1000;
+    var maxHeight = baseHeight;
+    for (var p = 0; p < terrain.peaks.length; p++) {
+      if (terrain.peaks[p].height > maxHeight) maxHeight = terrain.peaks[p].height;
+    }
+    var heightScale = terrainMesh.userData.heightScale;
+    for (var i = 0; i < positions.count; i++) {
+      var sy = positions.getY(i);
+      var h = (sy / heightScale) + baseHeight;
+      var color = getTerrainColor(h, terrain, baseHeight, maxHeight);
+      colors.setXYZ(i, color.r, color.g, color.b);
+    }
+    colors.needsUpdate = true;
+  }
+
+  function rebuildTrailsAndMarks() {
+    if (!mountainGroup || !terrainMesh || !currentMountainRoute) return;
+    var route = currentMountainRoute;
+    var terrain = route.terrain;
+    var seed = route.lng * 1000 + route.lat;
+    var size = 60;
+    var heightScale = 0.018;
+    var baseHeight = terrain.baseHeight || 1000;
+    var trailMeshes = [];
+    var peakMeshes = [];
+    var campMeshes = [];
+    mountainGroup.traverse(function(obj) {
+      if (obj.userData && (obj.userData.isTrail || obj.userData.isTrailDot || obj.userData.isTrailLabel || obj.userData.isPeak || obj.userData.isPeakLabel || obj.userData.isCamp || obj.userData.isCampLabel)) {
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) {
+          if (obj.material.map) obj.material.map.dispose();
+          obj.material.dispose();
+        }
+        trailMeshes.push(obj);
+      }
+    });
+    for (var ti = 0; ti < trailMeshes.length; ti++) {
+      mountainGroup.remove(trailMeshes[ti]);
+    }
+    for (var pi = 0; pi < terrain.peaks.length; pi++) {
+      var peak = terrain.peaks[pi];
+      var peakX = (peak.x - 0.5) * size;
+      var peakZ = (peak.y - 0.5) * size;
+      var peakY = getVertexHeightAt(peakX, peakZ);
+      var peakGeo = new THREE.ConeGeometry(0.7, 2.2, 8);
+      var peakMat = new THREE.MeshStandardMaterial({
+        color: 0xffffff, emissive: 0x4488ff, emissiveIntensity: 0.3, roughness: 0.3
+      });
+      var peakMesh = new THREE.Mesh(peakGeo, peakMat);
+      peakMesh.position.set(peakX, peakY + 1.2, peakZ);
+      peakMesh.userData.isPeak = true;
+      mountainGroup.add(peakMesh);
+      var lc = document.createElement('canvas');
+      var lctx = lc.getContext('2d');
+      lc.width = 256; lc.height = 64;
+      lctx.font = 'bold 22px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif';
+      lctx.fillStyle = 'rgba(255, 255, 255, 0.95)'; lctx.textAlign = 'center';
+      lctx.shadowColor = 'rgba(0, 0, 0, 0.8)'; lctx.shadowBlur = 6;
+      lctx.fillText(peak.name, 128, 26);
+      lctx.font = '16px -apple-system, "PingFang SC", sans-serif';
+      lctx.fillStyle = 'rgba(150, 200, 255, 0.9)';
+      lctx.fillText(peak.height + 'm', 128, 50);
+      var lt = new THREE.CanvasTexture(lc);
+      var lm = new THREE.SpriteMaterial({ map: lt, transparent: true, depthTest: false, depthWrite: false });
+      var ls = new THREE.Sprite(lm);
+      ls.position.set(peakX, peakY + 5, peakZ);
+      ls.scale.set(6, 1.5, 1);
+      ls.userData.isPeakLabel = true;
+      mountainGroup.add(ls);
+    }
+    rebuildTrailRender();
+    if (terrain.camps) {
+      for (var ci = 0; ci < terrain.camps.length; ci++) {
+        var camp = terrain.camps[ci];
+        var cx = (camp.x - 0.5) * size;
+        var cz = (camp.y - 0.5) * size;
+        var cy = getVertexHeightAt(cx, cz);
+        var tentGeo = new THREE.ConeGeometry(0.7, 1.1, 4);
+        var tentMat = new THREE.MeshStandardMaterial({
+          color: 0x66ff88, emissive: 0x228833, emissiveIntensity: 0.4, roughness: 0.6
+        });
+        var tentMesh = new THREE.Mesh(tentGeo, tentMat);
+        tentMesh.position.set(cx, cy + 0.85, cz);
+        tentMesh.rotation.y = Math.PI / 4;
+        tentMesh.userData.isCamp = true;
+        mountainGroup.add(tentMesh);
+        if (camp.name) {
+          var clc = document.createElement('canvas');
+          var clctx = clc.getContext('2d');
+          clc.width = 180; clc.height = 40;
+          clctx.font = 'bold 15px -apple-system, "PingFang SC", sans-serif';
+          clctx.fillStyle = 'rgba(120, 255, 150, 0.95)'; clctx.textAlign = 'center';
+          clctx.shadowColor = 'rgba(0,0,0,0.9)'; clctx.shadowBlur = 4;
+          clctx.fillText(camp.name, 90, 25);
+          var clt = new THREE.CanvasTexture(clc);
+          var clm = new THREE.SpriteMaterial({ map: clt, transparent: true, depthTest: false, depthWrite: false });
+          var cls = new THREE.Sprite(clm);
+          cls.position.set(cx, cy + 2.5, cz);
+          cls.scale.set(3.5, 0.8, 1);
+          cls.userData.isCampLabel = true;
+          mountainGroup.add(cls);
+        }
+      }
+    }
+  }
+
+  function getVertexHeightAt(wx, wz) {
+    if (!terrainMesh) return 0;
+    var positions = terrainMesh.geometry.attributes.position;
+    var segs = terrainMesh.userData.segments;
+    var size = terrainMesh.userData.size;
+    var nx = (wx + size / 2) / size;
+    var nz = (wz + size / 2) / size;
+    nx = Math.max(0, Math.min(1, nx));
+    nz = Math.max(0, Math.min(1, nz));
+    var fx = nx * segs;
+    var fz = nz * segs;
+    var ix = Math.floor(fx), iz = Math.floor(fz);
+    var tx = fx - ix, tz = fz - iz;
+    ix = Math.min(ix, segs); iz = Math.min(iz, segs);
+    var ixp = Math.min(ix + 1, segs);
+    var izp = Math.min(iz + 1, segs);
+    function v(ci, cj) { return positions.getY(cj * (segs + 1) + ci); }
+    var h00 = v(ix, iz), h10 = v(ixp, iz);
+    var h01 = v(ix, izp), h11 = v(ixp, izp);
+    var h0 = h00 * (1 - tx) + h10 * tx;
+    var h1 = h01 * (1 - tx) + h11 * tx;
+    return h0 * (1 - tz) + h1 * tz;
+  }
+
+  function createEditCursor() {
+    if (editCursor) return;
+    var ringGeo = new THREE.RingGeometry(0.9, 1.0, 48);
+    ringGeo.rotateX(-Math.PI / 2);
+    var ringMat = new THREE.MeshBasicMaterial({ color: 0x66ffaa, transparent: true, opacity: 0.8, depthTest: false, side: THREE.DoubleSide });
+    editCursor = new THREE.Mesh(ringGeo, ringMat);
+    editCursor.visible = false;
+    editCursor.renderOrder = 1000;
+    scene.add(editCursor);
+    var innerGeo = new THREE.RingGeometry(0.0, 0.08, 24);
+    innerGeo.rotateX(-Math.PI / 2);
+    var innerMat = new THREE.MeshBasicMaterial({ color: 0x66ffaa, transparent: true, opacity: 0.9, depthTest: false });
+    var innerDot = new THREE.Mesh(innerGeo, innerMat);
+    innerDot.renderOrder = 1001;
+    editCursor.add(innerDot);
+  }
+
+  function updateEditCursorScale() {
+    if (!editCursor) return;
+    editCursor.scale.set(editBrushSize, editBrushSize, editBrushSize);
+  }
+
+  function updateEditCursorPosition(clientX, clientY) {
+    if (!editCursor || !terrainMesh || !renderer) return null;
+    var rect = renderer.domElement.getBoundingClientRect();
+    editMouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    editMouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    editRaycaster.setFromCamera(editMouse, camera);
+    var hits = editRaycaster.intersectObject(terrainMesh, false);
+    if (hits.length > 0) {
+      var p = hits[0].point;
+      editCursor.position.set(p.x, p.y + 0.15, p.z);
+      editCursor.visible = true;
+      return p;
+    } else {
+      editCursor.visible = false;
+      return null;
+    }
+  }
+
+  function showEditorToast(msg) {
+    var toast = document.getElementById('terrain-edit-toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'terrain-edit-toast';
+      toast.style.cssText = 'position:fixed;bottom:100px;left:50%;transform:translateX(-50%);padding:8px 20px;background:rgba(20,40,30,0.92);border:1px solid rgba(100,220,160,0.5);border-radius:20px;color:#88ffbb;font-family:-apple-system,"PingFang SC",sans-serif;font-size:14px;z-index:2000;pointer-events:none;transition:opacity 0.3s;opacity:0;backdrop-filter:blur(8px);';
+      document.body.appendChild(toast);
+    }
+    toast.textContent = msg;
+    toast.style.opacity = '1';
+    clearTimeout(toast._timer);
+    toast._timer = setTimeout(function() { toast.style.opacity = '0'; }, 1600);
+  }
+
+  function createEditorPanel() {
+    if (editorPanel) return;
+    var panel = document.createElement('div');
+    panel.id = 'terrain-editor-panel';
+    panel.style.cssText = 'position:fixed;top:20px;right:20px;z-index:500;width:230px;padding:16px;background:rgba(15,25,45,0.94);border:1px solid rgba(100,180,140,0.3);border-radius:12px;color:#c8d8f0;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;font-size:13px;backdrop-filter:blur(12px);display:none;box-shadow:0 4px 30px rgba(0,0,0,0.6);';
+    panel.innerHTML = ''
+      + '<div style="font-size:15px;font-weight:600;color:#88ffbb;margin-bottom:12px;display:flex;align-items:center;gap:6px;">🏔️ 地形/路径编辑器</div>'
+      + '<div style="margin-bottom:10px;">'
+      + '  <div style="margin-bottom:6px;color:#9ab;">工具</div>'
+      + '  <div style="display:flex;gap:4px;flex-wrap:wrap;">'
+      + '    <button data-tool="raise" style="flex:1;min-width:60px;padding:6px;background:rgba(100,200,140,0.2);border:1px solid rgba(100,200,140,0.4);border-radius:6px;color:#88ffbb;cursor:pointer;font-size:12px;">⬆ 抬升</button>'
+      + '    <button data-tool="lower" style="flex:1;min-width:60px;padding:6px;background:rgba(80,120,180,0.2);border:1px solid rgba(100,150,200,0.4);border-radius:6px;color:#99bbdd;cursor:pointer;font-size:12px;">⬇ 降低</button>'
+      + '    <button data-tool="smooth" style="flex:1;min-width:60px;padding:6px;background:rgba(180,160,80,0.2);border:1px solid rgba(200,180,100,0.4);border-radius:6px;color:#ddcc88;cursor:pointer;font-size:12px;">≈ 平滑</button>'
+      + '    <button data-tool="trail" style="flex:1;min-width:60px;padding:6px;background:rgba(60,80,100,0.2);border:1px solid rgba(100,130,160,0.3);border-radius:6px;color:#ffdd66;cursor:pointer;font-size:12px;">🛤️ 路径</button>'
+      + '  </div>'
+      + '</div>'
+      + '<div id="terrain-tools">'
+      + '<div style="margin-bottom:10px;">'
+      + '  <div style="margin-bottom:4px;display:flex;justify-content:space-between;"><span>笔刷大小</span><span id="brush-size-val">3</span></div>'
+      + '  <input type="range" id="brush-size" min="0.5" max="10" step="0.2" value="3" style="width:100%;accent-color:#66ffaa;">'
+      + '</div>'
+      + '<div style="margin-bottom:14px;">'
+      + '  <div style="margin-bottom:4px;display:flex;justify-content:space-between;"><span>笔刷强度</span><span id="brush-str-val">0.2</span></div>'
+      + '  <input type="range" id="brush-str" min="0.03" max="1.0" step="0.02" value="0.2" style="width:100%;accent-color:#66ffaa;">'
+      + '</div>'
+      + '</div>'
+      + '<div id="trail-tools" style="display:none;margin-bottom:14px;padding:10px;background:rgba(20,30,50,0.6);border-radius:8px;border:1px solid rgba(100,130,160,0.2);">'
+      + '  <div style="color:#ffdd66;font-size:12px;line-height:1.8;">'
+      + '    <div>🖱️ 拖拽黄色控制点移动路径</div>'
+      + '    <div>⇧ Shift+点击 添加路径点</div>'
+      + '    <div>⌫ Delete 删除选中点</div>'
+      + '  </div>'
+      + '</div>'
+      + '<div style="display:flex;gap:6px;margin-bottom:8px;">'
+      + '  <button id="edit-save" style="flex:1;padding:7px;background:rgba(100,200,140,0.25);border:1px solid rgba(100,220,160,0.5);border-radius:6px;color:#88ffbb;cursor:pointer;font-size:12px;">💾 保存</button>'
+      + '  <button id="edit-reset" style="flex:1;padding:7px;background:rgba(200,80,80,0.2);border:1px solid rgba(220,100,100,0.4);border-radius:6px;color:#ffaaaa;cursor:pointer;font-size:12px;">↺ 重置</button>'
+      + '</div>'
+      + '<div id="edit-toggle-btn" style="padding:7px;text-align:center;background:rgba(80,140,200,0.2);border:1px solid rgba(100,160,220,0.4);border-radius:6px;color:#aaccff;cursor:pointer;font-size:12px;">✏️ 退出编辑</div>';
+    document.body.appendChild(panel);
+    editorPanel = panel;
+
+    var toolBtns = panel.querySelectorAll('[data-tool]');
+    function setToolActive(tool) {
+      editTool = tool;
+      var terrainTools = panel.querySelector('#terrain-tools');
+      var trailTools = panel.querySelector('#trail-tools');
+      if (tool === 'trail') {
+        if (terrainTools) terrainTools.style.display = 'none';
+        if (trailTools) trailTools.style.display = 'block';
+        if (editCursor) editCursor.visible = false;
+        selectedTrailIndex = -1;
+        rebuildTrailHandles();
+      } else {
+        if (terrainTools) terrainTools.style.display = 'block';
+        if (trailTools) trailTools.style.display = 'none';
+        selectedTrailIndex = -1;
+        rebuildTrailHandles();
+      }
+      for (var i = 0; i < toolBtns.length; i++) {
+        var b = toolBtns[i];
+        if (b.getAttribute('data-tool') === tool) {
+          if (tool === 'raise') { b.style.background = 'rgba(100,220,140,0.4)'; b.style.borderColor = 'rgba(100,255,160,0.7)'; }
+          else if (tool === 'lower') { b.style.background = 'rgba(80,140,220,0.4)'; b.style.borderColor = 'rgba(100,180,255,0.7)'; }
+          else if (tool === 'trail') { b.style.background = 'rgba(220,180,60,0.4)'; b.style.borderColor = 'rgba(255,220,80,0.7)'; }
+          else { b.style.background = 'rgba(200,180,80,0.4)'; b.style.borderColor = 'rgba(255,220,100,0.7)'; }
+        } else {
+          b.style.background = 'rgba(60,80,100,0.2)';
+          b.style.borderColor = 'rgba(100,130,160,0.3)';
+        }
+      }
+    }
+    setToolActive('raise');
+    for (var ti = 0; ti < toolBtns.length; ti++) {
+      toolBtns[ti].addEventListener('click', (function(btn) {
+        return function() { setToolActive(btn.getAttribute('data-tool')); };
+      })(toolBtns[ti]));
+    }
+
+    var sizeSlider = panel.querySelector('#brush-size');
+    var sizeVal = panel.querySelector('#brush-size-val');
+    sizeSlider.addEventListener('input', function() {
+      editBrushSize = parseFloat(sizeSlider.value);
+      sizeVal.textContent = editBrushSize.toFixed(1);
+      updateEditCursorScale();
+    });
+    var strSlider = panel.querySelector('#brush-str');
+    var strVal = panel.querySelector('#brush-str-val');
+    strSlider.addEventListener('input', function() {
+      editBrushStrength = parseFloat(strSlider.value);
+      strVal.textContent = editBrushStrength.toFixed(2);
+    });
+
+    panel.querySelector('#edit-save').addEventListener('click', function() { saveAllMods(); });
+    panel.querySelector('#edit-reset').addEventListener('click', function() { resetAllMods(); });
+    panel.querySelector('#edit-toggle-btn').addEventListener('click', function() { toggleEditMode(false); });
+  }
+
+  var editEntryBtn = null;
+  function createEditEntryButton() {
+    if (editEntryBtn) return;
+    var btn = document.createElement('div');
+    btn.id = 'mountain-edit-btn';
+    btn.style.cssText = 'position:fixed;top:20px;left:180px;z-index:500;padding:10px 18px;background:rgba(15,35,25,0.92);border:1px solid rgba(100,200,140,0.4);border-radius:8px;color:#88ffbb;font-family:-apple-system,"PingFang SC",sans-serif;font-size:14px;cursor:pointer;display:none;backdrop-filter:blur(10px);transition:all 0.3s;box-shadow:0 4px 20px rgba(0,0,0,0.5);';
+    btn.innerHTML = '✏️ 编辑地形';
+    btn.addEventListener('mouseenter', function() {
+      btn.style.background = 'rgba(30,60,45,0.95)';
+      btn.style.borderColor = 'rgba(120,240,180,0.6)';
+    });
+    btn.addEventListener('mouseleave', function() {
+      if (!editMode) {
+        btn.style.background = 'rgba(15,35,25,0.92)';
+        btn.style.borderColor = 'rgba(100,200,140,0.4)';
+      }
+    });
+    btn.addEventListener('click', function() { toggleEditMode(true); });
+    document.body.appendChild(btn);
+    editEntryBtn = btn;
+  }
+
+  function toggleEditMode(enable) {
+    editMode = enable;
+    if (!editorPanel) createEditorPanel();
+    if (!editCursor) createEditCursor();
+    if (enable) {
+      editorPanel.style.display = 'block';
+      if (editEntryBtn) editEntryBtn.style.display = 'none';
+      controls.enabled = false;
+      updateEditCursorScale();
+      if (backButton) backButton.style.pointerEvents = 'none';
+      renderer.domElement.style.cursor = 'crosshair';
+      showEditorToast('选择工具编辑地形或路径 · 右键退出编辑');
+    } else {
+      editorPanel.style.display = 'none';
+      editCursor.visible = false;
+      isEditing = false;
+      isDraggingTrail = false;
+      selectedTrailIndex = -1;
+      controls.enabled = true;
+      try { renderer.domElement.releasePointerCapture(); } catch(ex) {}
+      if (editEntryBtn) editEntryBtn.style.display = 'block';
+      if (backButton) backButton.style.pointerEvents = 'auto';
+      renderer.domElement.style.cursor = 'grab';
+      if (trailHandlesGroup) trailHandlesGroup.visible = false;
+    }
+  }
+
+  function onTerrainPointerDown(e) {
+    if (!editMode || viewMode !== 'mountain') return;
+    if (e.button !== 0) return;
+    var panel = editorPanel;
+    if (panel) {
+      var r = panel.getBoundingClientRect();
+      if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) return;
+    }
+    var backR = backButton ? backButton.getBoundingClientRect() : null;
+    if (backR && e.clientX >= backR.left && e.clientX <= backR.right && e.clientY >= backR.top && e.clientY <= backR.bottom) return;
+
+    if (editTool === 'trail') {
+      var hitIdx = pickTrailHandle(e.clientX, e.clientY);
+      if (hitIdx >= 0) {
+        selectedTrailIndex = hitIdx;
+        isDraggingTrail = true;
+        try { renderer.domElement.setPointerCapture(e.pointerId); } catch(ex) {}
+        rebuildTrailHandles();
+      } else if (e.shiftKey) {
+        addTrailPoint(e.clientX, e.clientY);
+      } else {
+        selectedTrailIndex = -1;
+        rebuildTrailHandles();
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+
+    isEditing = true;
+    try { renderer.domElement.setPointerCapture(e.pointerId); } catch(ex) {}
+    var hp = updateEditCursorPosition(e.clientX, e.clientY);
+    if (hp) applyBrush(hp);
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  function onTerrainPointerMove(e) {
+    if (viewMode !== 'mountain') return;
+    if (editMode) {
+      if (editTool === 'trail') {
+        if (isDraggingTrail) {
+          dragTrailPoint(e.clientX, e.clientY);
+          e.preventDefault();
+        } else {
+          var hitIdx = pickTrailHandle(e.clientX, e.clientY);
+          renderer.domElement.style.cursor = hitIdx >= 0 ? 'pointer' : 'crosshair';
+        }
+        if (editCursor) editCursor.visible = false;
+        return;
+      }
+      var hp = updateEditCursorPosition(e.clientX, e.clientY);
+      if (isEditing && hp) {
+        applyBrush(hp);
+        e.preventDefault();
+      }
+      renderer.domElement.style.cursor = 'crosshair';
+      return;
+    }
+  }
+
+  function onTerrainPointerUp(e) {
+    if (isDraggingTrail) {
+      isDraggingTrail = false;
+      try { renderer.domElement.releasePointerCapture(e.pointerId); } catch(ex) {}
+      e.preventDefault();
+      return;
+    }
+    if (isEditing) {
+      isEditing = false;
+      try { renderer.domElement.releasePointerCapture(e.pointerId); } catch(ex) {}
+      if (editMode && terrainMesh) {
+        rebuildTrailsAndMarks();
+      }
+    }
+    if (editMode && e.button === 2) {
+      toggleEditMode(false);
+    }
+  }
+
+  function onTerrainWheel(e) {
+    if (!editMode || viewMode !== 'mountain' || !terrainMesh) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var delta = e.deltaY > 0 ? 1.08 : 1 / 1.08;
+    var newDist = camera.position.distanceTo(controls.target) * delta;
+    newDist = Math.max(20, Math.min(150, newDist));
+    var dir = camera.position.clone().sub(controls.target).normalize();
+    camera.position.copy(controls.target).add(dir.multiplyScalar(newDist));
+    camera.lookAt(controls.target);
+  }
+
+  function setupEditorEvents() {
+    window.addEventListener('keydown', onEditorKeyDown);
+  }
+
+  function onEditorKeyDown(e) {
+    if (!editMode || viewMode !== 'mountain') return;
+    if (editTool !== 'trail') return;
+    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedTrailIndex >= 0) {
+      deleteTrailPoint(selectedTrailIndex);
+      e.preventDefault();
+    }
+  }
+
+  function loadTrailMod(routeId) {
+    try {
+      var raw = localStorage.getItem(getStorageKey(routeId));
+      if (!raw) return null;
+      var data = JSON.parse(raw);
+      if (data && data.trailPoints) return data.trailPoints;
+      return null;
+    } catch(e) { return null; }
+  }
+
+  function ensureWorkingTrailPoints() {
+    if (workingTrailPoints) return workingTrailPoints;
+    if (!currentMountainRoute || !currentMountainRoute.terrain) return [];
+    var saved = loadTrailMod(currentMountainRoute.id);
+    var src = saved || currentMountainRoute.terrain.trailPoints || [];
+    workingTrailPoints = src.map(function(p) {
+      return { x: p.x, y: p.y, name: p.name };
+    });
+    return workingTrailPoints;
+  }
+
+  function rebuildTrailHandles() {
+    if (viewMode !== 'mountain' || !mountainGroup) {
+      if (trailHandlesGroup) trailHandlesGroup.visible = false;
+      return;
+    }
+    if (!trailHandlesGroup) {
+      trailHandlesGroup = new THREE.Group();
+      trailHandlesGroup.name = 'trail_handles';
+      scene.add(trailHandlesGroup);
+    }
+    while (trailHandlesGroup.children.length > 0) {
+      var c = trailHandlesGroup.children[0];
+      trailHandlesGroup.remove(c);
+      if (c.geometry) c.geometry.dispose();
+      if (c.material) { if (c.material.map) c.material.map.dispose(); c.material.dispose(); }
+    }
+    trailHandlesGroup.visible = (editMode && editTool === 'trail');
+    if (!trailHandlesGroup.visible) return;
+    var pts = ensureWorkingTrailPoints();
+    var size = 60;
+    var hMatU = new THREE.MeshStandardMaterial({ color: 0xffaa00, emissive: 0xff6600, emissiveIntensity: 0.8, roughness: 0.3 });
+    var hMatS = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffaa00, emissiveIntensity: 1.5, roughness: 0.2 });
+    for (var i = 0; i < pts.length; i++) {
+      var pt = pts[i];
+      var wx = (pt.x - 0.5) * size;
+      var wz = (pt.y - 0.5) * size;
+      var wy = getVertexHeightAt(wx, wz) + 0.6;
+      var geo = new THREE.SphereGeometry(0.45, 16, 16);
+      var mesh = new THREE.Mesh(geo, i === selectedTrailIndex ? hMatS : hMatU);
+      mesh.position.set(wx, wy, wz);
+      if (i === selectedTrailIndex) mesh.scale.setScalar(1.3);
+      mesh.userData.isTrailHandle = true;
+      mesh.userData.handleIndex = i;
+      mesh.renderOrder = 997;
+      trailHandlesGroup.add(mesh);
+      if (pt.name) {
+        var lc = document.createElement('canvas');
+        var lctx = lc.getContext('2d');
+        lc.width = 200; lc.height = 36;
+        lctx.font = 'bold 14px -apple-system,"PingFang SC",sans-serif';
+        lctx.fillStyle = 'rgba(255,200,80,0.95)'; lctx.textAlign = 'center';
+        lctx.shadowColor = 'rgba(0,0,0,0.9)'; lctx.shadowBlur = 4;
+        lctx.fillText(pt.name, 100, 20);
+        var lt = new THREE.CanvasTexture(lc);
+        var lm = new THREE.SpriteMaterial({ map: lt, transparent: true, depthTest: false, depthWrite: false });
+        var ls = new THREE.Sprite(lm);
+        ls.position.set(wx, wy + 1.2, wz);
+        ls.scale.set(4, 0.7, 1);
+        trailHandlesGroup.add(ls);
+      }
+    }
+    var linePts = [];
+    for (var li = 0; li < pts.length; li++) {
+      var lwx = (pts[li].x - 0.5) * size;
+      var lwz = (pts[li].y - 0.5) * size;
+      var lwy = getVertexHeightAt(lwx, lwz) + 0.6;
+      linePts.push(new THREE.Vector3(lwx, lwy, lwz));
+    }
+    if (linePts.length >= 2) {
+      var lineGeo = new THREE.BufferGeometry().setFromPoints(linePts);
+      var lineMat = new THREE.LineBasicMaterial({ color: 0xffcc44, transparent: true, opacity: 0.7, depthTest: false });
+      var line = new THREE.Line(lineGeo, lineMat);
+      line.renderOrder = 996;
+      trailHandlesGroup.add(line);
+    }
+  }
+
+  function rebuildTrailRender() {
+    var oldTrails = [];
+    if (mountainGroup) {
+      mountainGroup.traverse(function(obj) {
+        if (obj.userData && (obj.userData.isTrail || obj.userData.isTrailDot || obj.userData.isTrailLabel)) {
+          oldTrails.push(obj);
+        }
+      });
+    }
+    for (var i = 0; i < oldTrails.length; i++) {
+      var o = oldTrails[i];
+      if (o.parent) o.parent.remove(o);
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) {
+        if (o.material.map) o.material.map.dispose();
+        o.material.dispose();
+      }
+    }
+    rebuildTrailHandles();
+    if (!currentMountainRoute || !currentMountainRoute.terrain || !mountainGroup) return;
+    var trailSrc = ensureWorkingTrailPoints();
+    if (trailSrc.length < 2) return;
+    var size = 60;
+    var ctrlPts2D = [];
+    for (var tpi = 0; tpi < trailSrc.length; tpi++) {
+      ctrlPts2D.push(new THREE.Vector3(trailSrc[tpi].x, 0, trailSrc[tpi].y));
+    }
+    var curve2D = new THREE.CatmullRomCurve3(ctrlPts2D, false, 'catmullrom', 0.1);
+    var sampleCount = Math.max(100, trailSrc.length * 25);
+    var groundOffset = 0.35;
+    var trailPoints = [];
+    for (var si = 0; si <= sampleCount; si++) {
+      var t = si / sampleCount;
+      var pt = curve2D.getPoint(t);
+      var sx = (pt.x - 0.5) * size;
+      var sz = (pt.z - 0.5) * size;
+      var sy = getVertexHeightAt(sx, sz) + groundOffset;
+      trailPoints.push(new THREE.Vector3(sx, sy, sz));
+    }
+    var trailCurve = new THREE.CatmullRomCurve3(trailPoints, false, 'catmullrom', 0.0);
+    var tubeGeo = new THREE.TubeGeometry(trailCurve, 280, 0.12, 6, false);
+    var tubeMat = new THREE.MeshBasicMaterial({ color: 0xffcc44, transparent: true, opacity: 0.95, depthWrite: false });
+    var tubeMesh = new THREE.Mesh(tubeGeo, tubeMat);
+    tubeMesh.renderOrder = 999; tubeMesh.userData.isTrail = true;
+    mountainGroup.add(tubeMesh);
+    var glowGeo = new THREE.TubeGeometry(trailCurve, 280, 0.32, 6, false);
+    var glowMat = new THREE.MeshBasicMaterial({ color: 0xffdd66, transparent: true, opacity: 0.18, blending: THREE.AdditiveBlending, depthWrite: false });
+    var glowMesh = new THREE.Mesh(glowGeo, glowMat);
+    glowMesh.renderOrder = 998; glowMesh.userData.isTrail = true;
+    mountainGroup.add(glowMesh);
+    for (var ti2 = 0; ti2 < trailSrc.length; ti2++) {
+      var tp2 = trailSrc[ti2];
+      var tpx = (tp2.x - 0.5) * size;
+      var tpz = (tp2.y - 0.5) * size;
+      var tpy = getVertexHeightAt(tpx, tpz) + groundOffset + 0.2;
+      var dotGeo = new THREE.SphereGeometry(0.18, 12, 12);
+      var dotMat = new THREE.MeshStandardMaterial({ color: 0xffcc44, emissive: 0xffaa00, emissiveIntensity: 1.0, roughness: 0.2 });
+      var dotMesh = new THREE.Mesh(dotGeo, dotMat);
+      dotMesh.position.set(tpx, tpy, tpz);
+      dotMesh.userData.isTrailDot = true;
+      mountainGroup.add(dotMesh);
+      if (tp2.name) {
+        var lc = document.createElement('canvas');
+        var lctx = lc.getContext('2d');
+        lc.width = 200; lc.height = 48;
+        lctx.font = 'bold 17px -apple-system,"PingFang SC",sans-serif';
+        lctx.fillStyle = 'rgba(255,220,150,0.95)'; lctx.textAlign = 'center';
+        lctx.shadowColor = 'rgba(0,0,0,0.9)'; lctx.shadowBlur = 4;
+        lctx.fillText(tp2.name, 100, 28);
+        var lt = new THREE.CanvasTexture(lc);
+        var lm = new THREE.SpriteMaterial({ map: lt, transparent: true, depthTest: false, depthWrite: false });
+        var ls = new THREE.Sprite(lm);
+        ls.position.set(tpx, tpy + 2, tpz);
+        ls.scale.set(4, 1, 1);
+        ls.userData.isTrailLabel = true;
+        mountainGroup.add(ls);
+      }
+    }
+  }
+
+  function pickTrailHandle(clientX, clientY) {
+    if (!trailHandlesGroup || !trailHandlesGroup.visible) return -1;
+    var rect = renderer.domElement.getBoundingClientRect();
+    editMouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    editMouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    editRaycaster.setFromCamera(editMouse, camera);
+    var handles = [];
+    trailHandlesGroup.traverse(function(obj) {
+      if (obj.userData && obj.userData.isTrailHandle) handles.push(obj);
+    });
+    var hits = editRaycaster.intersectObjects(handles, false);
+    if (hits.length > 0) return hits[0].object.userData.handleIndex;
+    return -1;
+  }
+
+  function getTerrainHitPoint(clientX, clientY) {
+    if (!terrainMesh) return null;
+    var rect = renderer.domElement.getBoundingClientRect();
+    editMouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    editMouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    editRaycaster.setFromCamera(editMouse, camera);
+    var hits = editRaycaster.intersectObject(terrainMesh, false);
+    if (hits.length > 0) return hits[0].point;
+    return null;
+  }
+
+  function worldToUV(wx, wz) {
+    var size = 60;
+    var nx = (wx + size / 2) / size;
+    var nz = (wz + size / 2) / size;
+    return { x: Math.max(0.001, Math.min(0.999, nx)), y: Math.max(0.001, Math.min(0.999, nz)) };
+  }
+
+  function dragTrailPoint(clientX, clientY) {
+    if (selectedTrailIndex < 0 || !workingTrailPoints) return;
+    var hit = getTerrainHitPoint(clientX, clientY);
+    if (!hit) return;
+    var uv = worldToUV(hit.x, hit.z);
+    workingTrailPoints[selectedTrailIndex].x = uv.x;
+    workingTrailPoints[selectedTrailIndex].y = uv.y;
+    rebuildTrailRender();
+  }
+
+  function addTrailPoint(clientX, clientY) {
+    var hit = getTerrainHitPoint(clientX, clientY);
+    if (!hit) return;
+    var uv = worldToUV(hit.x, hit.z);
+    var pts = ensureWorkingTrailPoints();
+    if (pts.length < 2) {
+      pts.push({ x: uv.x, y: uv.y, name: '途经点' + (pts.length + 1) });
+      selectedTrailIndex = pts.length - 1;
+    } else {
+      var ctrlPts2D = [];
+      for (var i = 0; i < pts.length; i++) {
+        ctrlPts2D.push(new THREE.Vector3(pts[i].x, 0, pts[i].y));
+      }
+      var curve2D = new THREE.CatmullRomCurve3(ctrlPts2D, false, 'catmullrom', 0.1);
+      var steps = 400;
+      var bestT = 0, bestDist = Infinity;
+      for (var s = 0; s <= steps; s++) {
+        var t = s / steps;
+        var cp = curve2D.getPoint(t);
+        var dx = cp.x - uv.x, dz = cp.z - uv.y;
+        var dist = dx * dx + dz * dz;
+        if (dist < bestDist) { bestDist = dist; bestT = t; }
+      }
+      var insertIdx = 1;
+      for (var j = 1; j < pts.length; j++) {
+        if (bestT >= (j - 1) / (pts.length - 1)) insertIdx = j;
+      }
+      pts.splice(insertIdx, 0, { x: uv.x, y: uv.y, name: '途经点' });
+      selectedTrailIndex = insertIdx;
+    }
+    rebuildTrailRender();
+    showEditorToast('已添加路径点');
+  }
+
+  function deleteTrailPoint(idx) {
+    var pts = ensureWorkingTrailPoints();
+    if (pts.length <= 2) { showEditorToast('至少需要保留2个点'); return; }
+    pts.splice(idx, 1);
+    if (selectedTrailIndex >= pts.length) selectedTrailIndex = pts.length - 1;
+    rebuildTrailRender();
+    showEditorToast('已删除路径点');
+  }
+
+// 退出山峰模式
+  function exitMountainMode() {
+    if (viewMode !== 'mountain') return;
+    if (isCameraAnimating) return;
+    isCameraAnimating = true;
+    viewMode = 'global';
+    currentMountainRoute = null;
+    workingTrailPoints = null;
+    selectedTrailIndex = -1;
+    isDraggingTrail = false;
+    if (backButton) backButton.style.display = 'none';
+    if (editEntryBtn) editEntryBtn.style.display = 'none';
+    toggleEditMode(false);
+    terrainMesh = null;
+    baseHeights = null;
+    if (editCursor) { editCursor.visible = false; }
+
+    var startPos = camera.position.clone();
+    var startTarget = controls.target.clone();
+    var endPos = new THREE.Vector3();
+    var beta = (CONFIG.cameraBeta * Math.PI) / 180;
+    var alpha = (CONFIG.cameraAlpha * Math.PI) / 180;
+    endPos.x = CONFIG.cameraDistance * Math.sin(alpha) * Math.sin(beta);
+    endPos.y = CONFIG.cameraDistance * Math.cos(alpha);
+    endPos.z = CONFIG.cameraDistance * Math.sin(alpha) * Math.cos(beta);
+    var targetPos = new THREE.Vector3(0, 0, 0);
+
+    var startTime = Date.now();
+    var duration = 1500;
+    controls.enabled = false;
+
+    mapGroup.visible = true;
+    markersGroup.visible = true;
+    atmosphereGroup.visible = true;
+
+    function animateExit() {
+      var elapsed = Date.now() - startTime;
+      var t = Math.min(elapsed / duration, 1);
+      var easeT = 1 - Math.pow(1 - t, 3);
+      camera.position.lerpVectors(startPos, endPos, easeT);
+      controls.target.lerpVectors(startTarget, targetPos, easeT);
+      camera.lookAt(controls.target);
+      if (mountainGroup) {
+        var scaleT = 1 - t;
+        var s = Math.max(0.01, scaleT);
+        mountainGroup.scale.set(s, s, s);
+      }
+      if (t < 1) {
+        requestAnimationFrame(animateExit);
+      } else {
+        camera.position.copy(endPos);
+        controls.target.copy(targetPos);
+        camera.lookAt(controls.target);
+        controls.minDistance = CONFIG.sphereRadius * 1.3;
+        controls.maxDistance = CONFIG.sphereRadius * 3.0;
+        controls.minPolarAngle = Math.PI * 0.1;
+        controls.maxPolarAngle = Math.PI * 0.75;
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.15;
+        controls.update();
+        controls.enabled = true;
+        isCameraAnimating = false;
+        if (mountainGroup) {
+          scene.remove(mountainGroup);
+          mountainGroup.traverse(function(obj) {
+            if (obj.geometry) obj.geometry.dispose();
+            if (obj.material) {
+              if (obj.material.map) obj.material.map.dispose();
+              obj.material.dispose();
+            }
+          });
+          mountainGroup = null;
+        }
+      }
+    }
+    animateExit();
+  }
+
+  function getViewMode() {
+    return viewMode;
+  }
+
+  function dispose() {
+    if (animationId) {
+      cancelAnimationFrame(animationId);
+    }
+    if (renderer) {
+      renderer.dispose();
+      if (renderer.domElement && renderer.domElement.parentNode) {
+        renderer.domElement.parentNode.removeChild(renderer.domElement);
+      }
+    }
+    if (backButton) {
+      backButton.remove();
+      backButton = null;
+    }
+    window.removeEventListener('resize', onWindowResize);
+  }
+
+  return {
+    init: init,
+    addMarkers: addMarkers,
+    setOnRouteClick: setOnRouteClick,
+    flyTo: flyTo,
+    resetView: resetView,
+    dispose: dispose,
+    isReady: function() { return isReady; },
+    enterMountainMode: enterMountainMode,
+    exitMountainMode: exitMountainMode,
+    getViewMode: getViewMode
+  };
+})();

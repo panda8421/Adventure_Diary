@@ -1,0 +1,1091 @@
+/* ============================================================
+   全局样式 - 熊猫历险记
+   深色户外质感，极简高级，克制不花哨
+   ============================================================ */
+
+/* CSS 变量 */
+:root {
+  --bg-primary: #121417;
+  --bg-secondary: #1a1e23;
+  --bg-panel: rgba(18, 20, 23, 0.75);
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-active: rgba(255, 255, 255, 0.15);
+  --text-primary: #e8eaed;
+  --text-secondary: #9aa0a8;
+  --text-tertiary: #5f6368;
+  --accent: #ffffff;
+  --accent-dim: rgba(255, 255, 255, 0.4);
+  --glow-1: rgba(255, 255, 255, 0.15);
+  --glow-2: rgba(255, 255, 255, 0.25);
+  --glow-3: rgba(255, 255, 255, 0.35);
+  --glow-4: rgba(255, 255, 255, 0.5);
+  --glow-5: rgba(255, 255, 255, 0.65);
+  --transition: 0.35s ease-out;
+  --radius: 16px;
+  --radius-sm: 8px;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+/* 基础重置 */
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-sans);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ============================================================
+   地图容器
+   ============================================================ */
+#map-container {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 1 !important;
+  background: #121417;
+}
+
+/* 地图状态指示器 */
+#map-status {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  padding: 6px 16px;
+  border-radius: 20px;
+  background: rgba(0, 0, 0, 0.6);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-family: var(--font-sans);
+  pointer-events: none;
+  transition: opacity 0.6s ease;
+  letter-spacing: 0.5px;
+}
+
+/* 地图模式切换按钮 */
+#map-mode-toggle {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  z-index: 6;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  transition: all 0.25s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#map-mode-toggle:hover {
+  color: var(--text-primary);
+  border-color: var(--border-active);
+  transform: scale(1.05);
+}
+
+#map-mode-toggle:active {
+  transform: scale(0.95);
+}
+
+/* ============================================================
+   面板通用样式
+   ============================================================ */
+.panel {
+  position: fixed;
+  z-index: 10;
+  background: var(--bg-panel);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  transition: transform var(--transition), opacity var(--transition);
+}
+
+/* 毛玻璃面板 */
+.glass-panel {
+  position: fixed !important;
+  z-index: 10 !important;
+  background: var(--bg-panel);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+
+/* ============================================================
+   探险者状态栏 - 左上角
+   ============================================================ */
+#explorer-panel {
+  top: 20px;
+  left: 20px;
+  width: 260px;
+  padding: 20px;
+  z-index: 20;
+}
+
+#explorer-panel .explorer-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+#explorer-panel .avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #3a3f47, #1a1e23);
+  border: 1px solid var(--border-active);
+  flex-shrink: 0;
+  /* 头像占位：后续替换为真实图片 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+#explorer-panel .avatar svg {
+  width: 24px;
+  height: 24px;
+  stroke: var(--text-secondary);
+  fill: none;
+}
+
+#explorer-panel .explorer-info .title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 0.5px;
+}
+
+#explorer-panel .explorer-info .rank {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+#explorer-panel .stats {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+#explorer-panel .stat-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+#explorer-panel .stat-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+#explorer-panel .stat-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+#explorer-panel .stat-unit {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-tertiary);
+  margin-left: 2px;
+}
+
+/* 阶位标识 */
+#explorer-panel .rank-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 16px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+}
+
+#explorer-panel .rank-icon {
+  font-size: 16px;
+  opacity: 0.8;
+}
+
+#explorer-panel .rank-text {
+  font-size: 12px;
+  color: var(--text-secondary);
+  letter-spacing: 1px;
+}
+
+#explorer-panel .rank-progress {
+  flex: 1;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+#explorer-panel .rank-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 1px;
+  transition: width var(--transition);
+}
+
+/* 星级筛选器 */
+#explorer-panel .filter-section {
+  padding-top: 4px;
+}
+
+#explorer-panel .filter-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-bottom: 8px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+#explorer-panel .star-filters {
+  display: flex;
+  gap: 6px;
+  justify-content: space-between;
+}
+
+#explorer-panel .star-filter-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition);
+  padding: 0;
+}
+
+#explorer-panel .star-filter-btn svg {
+  width: 16px;
+  height: 16px;
+  stroke: var(--text-tertiary);
+  fill: none;
+  transition: all var(--transition);
+}
+
+#explorer-panel .star-filter-btn:hover {
+  border-color: var(--border-active);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+#explorer-panel .star-filter-btn:hover svg {
+  stroke: var(--text-secondary);
+}
+
+#explorer-panel .star-filter-btn.active {
+  border-color: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+#explorer-panel .star-filter-btn.active svg {
+  stroke: var(--accent);
+  fill: var(--accent);
+}
+
+#explorer-panel .star-filter-btn.all-btn {
+  width: auto;
+  padding: 0 10px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-family: var(--font-sans);
+  letter-spacing: 0.5px;
+}
+
+#explorer-panel .star-filter-btn.all-btn.active {
+  color: var(--accent);
+}
+
+/* ============================================================
+   路线详情面板 - 右侧滑出
+   ============================================================ */
+#route-panel {
+  z-index: 30 !important;
+  top: 0;
+  right: 0;
+  width: 420px;
+  height: 100vh;
+  transform: translateX(100%);
+  border-radius: 0;
+  border-right: none;
+  border-top: none;
+  border-bottom: none;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+#route-panel.open {
+  transform: translateX(0);
+}
+
+#route-panel .panel-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 50%;
+  background: rgba(0,0,0,0.3);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 5;
+  transition: all var(--transition);
+  color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 1;
+}
+
+#route-panel .panel-close:hover {
+  border-color: var(--border-active);
+  background: rgba(255,255,255,0.1);
+  color: var(--text-primary);
+}
+
+#route-panel .route-content {
+  padding: 32px 28px;
+}
+
+/* 标题区 */
+#route-panel .route-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+  letter-spacing: 1px;
+}
+
+#route-panel .route-date {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+
+#route-panel .route-stars {
+  display: flex;
+  gap: 3px;
+  margin-bottom: 24px;
+}
+
+#route-panel .route-stars svg {
+  width: 22px;
+  height: 22px;
+}
+
+#route-panel .route-stars svg.filled {
+  stroke: var(--accent);
+  fill: var(--accent);
+}
+
+#route-panel .route-stars svg.empty {
+  stroke: var(--text-tertiary);
+  fill: none;
+}
+
+/* 数据栏 */
+#route-panel .route-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+#route-panel .route-stat-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+}
+
+#route-panel .route-stat-card .stat-num {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+#route-panel .route-stat-card .stat-unit {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-secondary);
+  margin-left: 2px;
+}
+
+#route-panel .route-stat-card .stat-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+}
+
+/* 正文 */
+#route-panel .route-description {
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--text-secondary);
+  margin-bottom: 24px;
+  white-space: pre-line;
+}
+
+/* 图集 */
+#route-panel .route-gallery {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  margin-bottom: 24px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.1) transparent;
+}
+
+#route-panel .route-gallery::-webkit-scrollbar {
+  height: 4px;
+}
+
+#route-panel .route-gallery::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.1);
+  border-radius: 2px;
+}
+
+#route-panel .route-gallery img {
+  width: 200px;
+  height: 130px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  flex-shrink: 0;
+  border: 1px solid var(--border-subtle);
+  transition: all var(--transition);
+}
+
+#route-panel .route-gallery img:hover {
+  border-color: var(--border-active);
+  transform: scale(1.02);
+}
+
+/* 配装区 */
+#route-panel .route-gear-section {
+  margin-bottom: 24px;
+}
+
+#route-panel .section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 12px;
+  letter-spacing: 0.5px;
+}
+
+#route-panel .route-gear-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+#route-panel .route-gear-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-subtle);
+  border-radius: 20px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+#route-panel .route-gear-item:hover {
+  border-color: var(--border-active);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+}
+
+#route-panel .gear-total-weight {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-top: 10px;
+}
+
+/* ============================================================
+   快捷装备栏 - 底部
+   ============================================================ */
+#quick-gear-bar {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--bg-panel);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-subtle);
+  border-radius: 40px;
+}
+
+#quick-gear-bar .gear-slot {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-subtle);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  transition: all var(--transition);
+  position: relative;
+}
+
+#quick-gear-bar .gear-slot:hover {
+  transform: translateY(-4px);
+  border-color: var(--border-active);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+#quick-gear-bar .gear-slot img {
+  width: 36px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 8px;
+}
+
+#quick-gear-bar .gear-slot .gear-tooltip {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  background: rgba(18, 20, 23, 0.9);
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition);
+}
+
+#quick-gear-bar .gear-slot:hover .gear-tooltip {
+  opacity: 1;
+}
+
+#quick-gear-bar .gear-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--border-subtle);
+}
+
+#quick-gear-bar .view-all-btn {
+  padding: 8px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 20px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+
+#quick-gear-bar .view-all-btn:hover {
+  border-color: var(--border-active);
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* ============================================================
+   装备图鉴面板 - 左侧滑出
+   ============================================================ */
+#gear-collection-panel {
+  z-index: 30 !important;
+  top: 0;
+  left: 0;
+  width: 440px;
+  height: 100vh;
+  transform: translateX(-100%);
+  border-radius: 0;
+  border-left: none;
+  border-top: none;
+  border-bottom: none;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+#gear-collection-panel.open {
+  transform: translateX(0);
+}
+
+#gear-collection-panel .panel-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 50%;
+  background: rgba(0,0,0,0.3);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 5;
+  transition: all var(--transition);
+  color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 1;
+}
+
+#gear-collection-panel .panel-close:hover {
+  border-color: var(--border-active);
+  background: rgba(255,255,255,0.1);
+  color: var(--text-primary);
+}
+
+#gear-collection-panel .gear-content {
+  padding: 32px 24px;
+}
+
+#gear-collection-panel .panel-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 20px;
+  letter-spacing: 1px;
+}
+
+/* 分类标签 */
+#gear-collection-panel .category-tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  margin-bottom: 20px;
+  scrollbar-width: none;
+}
+
+#gear-collection-panel .category-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+#gear-collection-panel .category-tab {
+  padding: 6px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 20px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  white-space: nowrap;
+  transition: all var(--transition);
+}
+
+#gear-collection-panel .category-tab:hover {
+  border-color: var(--border-active);
+  color: var(--text-primary);
+}
+
+#gear-collection-panel .category-tab.active {
+  border-color: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+}
+
+/* 装备列表 */
+#gear-collection-panel .gear-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#gear-collection-panel .gear-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+#gear-collection-panel .gear-card:hover {
+  border-color: var(--border-active);
+}
+
+#gear-collection-panel .gear-card.expanded {
+  border-color: var(--border-active);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+#gear-collection-panel .gear-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+}
+
+#gear-collection-panel .gear-card-img {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: rgba(255,255,255,0.04);
+}
+
+#gear-collection-panel .gear-card-info {
+  flex: 1;
+  min-width: 0;
+}
+
+#gear-collection-panel .gear-card-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+#gear-collection-panel .gear-card-meta {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+
+#gear-collection-panel .gear-card-tier {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  letter-spacing: 0.5px;
+}
+
+#gear-collection-panel .gear-card-tier.tier-legendary {
+  border-color: rgba(255, 255, 255, 0.3);
+  color: var(--text-primary);
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.08);
+}
+
+#gear-collection-panel .gear-card-tier.tier-main {
+  border-color: rgba(255, 255, 255, 0.15);
+  color: var(--text-secondary);
+}
+
+/* 装备详情展开 */
+#gear-collection-panel .gear-detail {
+  padding: 0 12px 16px;
+  display: none;
+}
+
+#gear-collection-panel .gear-card.expanded .gear-detail {
+  display: block;
+}
+
+#gear-collection-panel .gear-detail-image {
+  width: 100%;
+  height: 200px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  margin-bottom: 16px;
+  background: rgba(255,255,255,0.03);
+}
+
+#gear-collection-panel .gear-detail-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+#gear-collection-panel .gear-detail-stat {
+  padding: 8px;
+  background: rgba(255,255,255,0.02);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+#gear-collection-panel .gear-detail-stat .stat-label {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+#gear-collection-panel .gear-detail-stat .stat-value {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 15px;
+  margin-top: 2px;
+}
+
+#gear-collection-panel .gear-detail-notes {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+
+#gear-collection-panel .gear-detail-routes {
+  margin-top: 16px;
+}
+
+#gear-collection-panel .gear-detail-routes .sub-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+  letter-spacing: 0.5px;
+}
+
+#gear-collection-panel .gear-route-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  background: rgba(255,255,255,0.02);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all var(--transition);
+  margin-bottom: 4px;
+}
+
+#gear-collection-panel .gear-route-item:hover {
+  background: rgba(255,255,255,0.06);
+}
+
+#gear-collection-panel .gear-route-item .route-name {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+#gear-collection-panel .gear-route-item .route-date {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+/* ============================================================
+   图片预览遮罩
+   ============================================================ */
+#image-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition);
+}
+
+#image-overlay.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+#image-overlay img {
+  max-width: 90vw;
+  max-height: 90vh;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+#image-overlay .overlay-close {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 50%;
+  background: rgba(0,0,0,0.5);
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition);
+}
+
+#image-overlay .overlay-close:hover {
+  background: rgba(255,255,255,0.15);
+  border-color: rgba(255,255,255,0.4);
+}
+
+/* ============================================================
+   地图悬停浮窗
+   ============================================================ */
+#map-tooltip {
+  position: fixed;
+  z-index: 50;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease-out;
+  background: var(--bg-panel);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-active);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+#map-tooltip.visible {
+  opacity: 1;
+}
+
+#map-tooltip .tooltip-name {
+  font-weight: 600;
+  margin-bottom: 4px;
+  font-size: 14px;
+}
+
+#map-tooltip .tooltip-difficulty {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+#map-tooltip .tooltip-difficulty svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* ============================================================
+   响应式适配
+   ============================================================ */
+@media (max-width: 1024px) {
+  /* 路线详情面板改底部弹出 */
+  #route-panel {
+    top: auto;
+    bottom: 0;
+    right: 0;
+    width: 100%;
+    height: 70vh;
+    transform: translateY(100%);
+    border-radius: var(--radius) var(--radius) 0 0;
+    border-left: 1px solid var(--border-subtle);
+  }
+
+  #route-panel.open {
+    transform: translateY(0);
+  }
+
+  /* 装备图鉴面板改底部弹出 */
+  #gear-collection-panel {
+    top: auto;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 70vh;
+    transform: translateY(100%);
+    border-radius: var(--radius) var(--radius) 0 0;
+    border-right: 1px solid var(--border-subtle);
+  }
+
+  #gear-collection-panel.open {
+    transform: translateY(0);
+  }
+
+  /* 探险者面板缩小 */
+  #explorer-panel {
+    width: 220px;
+    padding: 14px;
+    top: 10px;
+    left: 10px;
+  }
+
+  /* 快捷装备栏可滚动 */
+  #quick-gear-bar {
+    max-width: calc(100vw - 40px);
+    overflow-x: auto;
+    padding: 8px 12px;
+    bottom: 12px;
+  }
+}
+
+@media (max-width: 640px) {
+  #explorer-panel {
+    width: 180px;
+    padding: 12px;
+    top: 8px;
+    left: 8px;
+  }
+
+  #explorer-panel .avatar {
+    width: 32px;
+    height: 32px;
+  }
+
+  #explorer-panel .explorer-info .title {
+    font-size: 12px;
+  }
+
+  #explorer-panel .stat-value {
+    font-size: 12px;
+  }
+
+  #quick-gear-bar .gear-slot {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+  }
+
+  #quick-gear-bar .gear-slot img {
+    width: 28px;
+    height: 28px;
+  }
+
+  #route-panel,
+  #gear-collection-panel {
+    height: 80vh;
+  }
+}

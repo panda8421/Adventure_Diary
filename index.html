@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>熊猫历险记</title>
+  <link rel="stylesheet" href="css/style.css">
+  <!-- Three.js CDN (带加载检测和备用) -->
+  <script>
+    window.__threeLoaded = false;
+    window.__orbitControlsLoaded = false;
+    function loadScript(src, onLoad, onError) {
+      var s = document.createElement('script');
+      s.src = src;
+      s.onload = onLoad;
+      s.onerror = onError;
+      document.head.appendChild(s);
+      return s;
+    }
+    function tryLoadThree(cdnIndex) {
+      var cdns = [
+        {
+          three: 'https://unpkg.com/three@0.126.0/build/three.min.js',
+          orbit: 'https://unpkg.com/three@0.126.0/examples/js/controls/OrbitControls.js',
+          composer: 'https://unpkg.com/three@0.126.0/examples/js/postprocessing/EffectComposer.js',
+          renderpass: 'https://unpkg.com/three@0.126.0/examples/js/postprocessing/RenderPass.js',
+          bloom: 'https://unpkg.com/three@0.126.0/examples/js/postprocessing/UnrealBloomPass.js',
+          shaderpass: 'https://unpkg.com/three@0.126.0/examples/js/postprocessing/ShaderPass.js',
+          copyshader: 'https://unpkg.com/three@0.126.0/examples/js/shaders/CopyShader.js',
+          luminance: 'https://unpkg.com/three@0.126.0/examples/js/shaders/LuminosityHighPassShader.js'
+        },
+        {
+          three: 'https://cdn.jsdelivr.net/npm/three@0.126.0/build/three.min.js',
+          orbit: 'https://cdn.jsdelivr.net/npm/three@0.126.0/examples/js/controls/OrbitControls.js',
+          composer: 'https://cdn.jsdelivr.net/npm/three@0.126.0/examples/js/postprocessing/EffectComposer.js',
+          renderpass: 'https://cdn.jsdelivr.net/npm/three@0.126.0/examples/js/postprocessing/RenderPass.js',
+          bloom: 'https://cdn.jsdelivr.net/npm/three@0.126.0/examples/js/postprocessing/UnrealBloomPass.js',
+          shaderpass: 'https://cdn.jsdelivr.net/npm/three@0.126.0/examples/js/postprocessing/ShaderPass.js',
+          copyshader: 'https://cdn.jsdelivr.net/npm/three@0.126.0/examples/js/shaders/CopyShader.js',
+          luminance: 'https://cdn.jsdelivr.net/npm/three@0.126.0/examples/js/shaders/LuminosityHighPassShader.js'
+        }
+      ];
+      var cdn = cdns[cdnIndex];
+      if (!cdn) {
+        console.error('[Bootstrap] 所有 Three.js CDN 都加载失败');
+        return;
+      }
+      console.log('[Bootstrap] 尝试 Three.js CDN #' + (cdnIndex + 1) + ':', cdn.three);
+      
+      // 按顺序加载
+      loadScript(cdn.three, function() {
+        console.log('[Bootstrap] Three.js 加载成功，版本:', THREE.REVISION);
+        window.__threeLoaded = true;
+        loadScript(cdn.orbit, function() {
+          console.log('[Bootstrap] OrbitControls 加载成功');
+          window.__orbitControlsLoaded = true;
+          // 加载后处理（可选，失败不影响主功能）
+          loadScript(cdn.composer, function() {
+            loadScript(cdn.shaderpass, function() {
+              loadScript(cdn.copyshader, function() {
+                loadScript(cdn.renderpass, function() {
+                  loadScript(cdn.luminance, function() {
+                    loadScript(cdn.bloom, function() {
+                      console.log('[Bootstrap] Bloom 后处理加载成功');
+                      window.__bloomLoaded = true;
+                    }, function() {
+                      console.warn('[Bootstrap] BloomPass 加载失败');
+                    });
+                  }, function() { console.warn('[Bootstrap] LuminosityShader 加载失败'); });
+                }, function() { console.warn('[Bootstrap] RenderPass 加载失败'); });
+              }, function() { console.warn('[Bootstrap] CopyShader 加载失败'); });
+            }, function() { console.warn('[Bootstrap] ShaderPass 加载失败'); });
+          }, function() { console.warn('[Bootstrap] EffectComposer 加载失败'); });
+        }, function() {
+          console.warn('[Bootstrap] OrbitControls 加载失败，尝试下一个 CDN');
+          tryLoadThree(cdnIndex + 1);
+        });
+      }, function() {
+        console.warn('[Bootstrap] Three.js 加载失败，尝试下一个 CDN');
+        tryLoadThree(cdnIndex + 1);
+      });
+    }
+    // 启动加载
+    tryLoadThree(0);
+  </script>
+  <!-- ECharts + ECharts GL CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+  <script src="https://unpkg.com/echarts-gl@2.0.9/dist/echarts-gl.min.js"></script>
+</head>
+<body>
+
+  <!-- 3D 地图容器 -->
+  <div id="map-container">
+    <div id="map-status">地图加载中...</div>
+    <button id="map-mode-toggle" title="切换地图模式">2D</button>
+  </div>
+
+  <!-- 探险者状态栏 - 左上角 -->
+  <div id="explorer-panel" class="glass-panel"></div>
+
+  <!-- 路线详情面板 - 右侧滑出 -->
+  <div id="route-panel" class="glass-panel"></div>
+
+  <!-- 装备图鉴面板 - 左侧滑出 -->
+  <div id="gear-collection-panel" class="glass-panel"></div>
+
+  <!-- 快捷装备栏 - 底部 -->
+  <div id="quick-gear-bar"></div>
+
+  <!-- 图片预览遮罩 -->
+  <div id="image-overlay"></div>
+
+  <!-- 地图悬停浮窗 -->
+  <div id="map-tooltip"></div>
+
+  <!-- JS 脚本（按依赖顺序加载） -->
+  <script src="js/data.js"></script>
+  <script>
+    // 全局错误捕获，避免静默白屏
+    window.onerror = function(msg, url, line, col, error) {
+      console.error('JS Error:', msg, url, line, col, error);
+    };
+    window.onunhandledrejection = function(e) {
+      console.error('Unhandled Promise:', e.reason);
+    };
+  </script>
+  <script src="js/three-map.js"></script>
+  <script src="js/map.js"></script>
+  <script src="js/explorer.js"></script>
+  <script src="js/gear.js"></script>
+  <script src="js/route.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
