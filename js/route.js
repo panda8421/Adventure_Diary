@@ -1,17 +1,431 @@
 /* ============================================================
    路线详情面板模块
-   右侧滑出面板 + 路线内容渲染
+   右侧滑出面板 + 路线内容渲染 + 多路线选择
    ============================================================ */
 
 const RouteModule = (function() {
   let currentRouteId = null;
 
-  // 初始化
   function init() {
     bindEvents();
+    if (typeof ThreeMap !== 'undefined' && ThreeMap.setOnTrailChangedCallback) {
+      ThreeMap.setOnTrailChangedCallback(function() {
+        if (currentRouteId) {
+          renderTrailSelector();
+        }
+      });
+    }
   }
 
-  // 渲染路线详情面板
+  function getTrailsForRoute(route) {
+    if (!route || !route.terrain) return [];
+    if (typeof ThreeMap !== 'undefined' && ThreeMap.getViewMode && ThreeMap.getViewMode() === 'mountain' && ThreeMap.getAllTrails) {
+      var all = ThreeMap.getAllTrails();
+      return all.map(function(t) {
+        return { id: t.id, name: t.name, originalName: t.originalName, direction: t.direction || 1, isDefault: !!t.isDefault, completed: !!t.completed };
+      });
+    }
+    var defaults = [];
+    if (route.terrain.trails && route.terrain.trails.length > 0) {
+      defaults = route.terrain.trails.map(function(t, idx) {
+        return { id: t.id, name: t.name, direction: t.direction || 1, isDefault: true, completed: idx === 0 };
+      });
+    } else if (route.terrain.trailPoints && route.terrain.trailPoints.length > 0) {
+      defaults = [{ id: 'default', name: '默认路线', direction: 1, isDefault: true, completed: true }];
+    }
+    return defaults;
+  }
+
+  function getActiveTrailId() {
+    if (typeof ThreeMap !== 'undefined' && ThreeMap.getViewMode && ThreeMap.getViewMode() === 'mountain' && ThreeMap.getActiveTrail) {
+      var active = ThreeMap.getActiveTrail();
+      return active ? active.id : null;
+    }
+    return null;
+  }
+
+  function getTrailDirection(trailId) {
+    if (typeof ThreeMap !== 'undefined' && ThreeMap.getViewMode && ThreeMap.getViewMode() === 'mountain' && ThreeMap.getAllTrails) {
+      var all = ThreeMap.getAllTrails();
+      for (var i = 0; i < all.length; i++) {
+        if (all[i].id === trailId) return all[i].direction || 1;
+      }
+    }
+    var route = getRouteById(currentRouteId);
+    if (route && route.terrain && route.terrain.trails) {
+      for (var j = 0; j < route.terrain.trails.length; j++) {
+        if (route.terrain.trails[j].id === trailId) return route.terrain.trails[j].direction || 1;
+      }
+    }
+    return 1;
+  }
+
+  function getShortName(name, isDefault, isRenamed) {
+    if (!name) return '';
+    var maxLen = 10;
+    if (!isDefault) {
+      var base = name.replace(/^五台山/, '');
+      if (base.length > maxLen) return base.substring(0, maxLen);
+      return base;
+    }
+    if (isRenamed) {
+      var parenMatch2 = name.match(/^[^（(]+/);
+      var base2 = parenMatch2 ? parenMatch2[0].trim() : name;
+      if (base2.length > maxLen) return base2.substring(0, maxLen);
+      return base2;
+    }
+    var parenMatch = name.match(/^[^（(]+/);
+    var base = parenMatch ? parenMatch[0].trim() : name;
+    if (base.indexOf('顺朝') !== -1 || base.indexOf('顺穿') !== -1) {
+      if (base.indexOf('大朝台') !== -1) return '大朝台';
+      if (base.indexOf('速穿') !== -1 || base.indexOf('一日') !== -1) return '速穿';
+      if (base.indexOf('三天两夜') !== -1) return '顺穿';
+      return '顺穿';
+    }
+    if (base.indexOf('逆朝') !== -1 || base.indexOf('逆穿') !== -1) return '逆穿';
+    if (base.indexOf('小朝台') !== -1) return '小朝台';
+    if (base.indexOf('大朝台') !== -1) return '大朝台';
+    if (base.length > maxLen) return base.substring(0, maxLen);
+    return base;
+  }
+
+  function renderTrailSelector() {
+    var container = document.getElementById('trail-selector-section');
+    if (!container) return;
+    var route = getRouteById(currentRouteId);
+    if (!route || !route.terrain) {
+      container.style.display = 'none';
+      return;
+    }
+    container.style.display = 'block';
+    var trails = getTrailsForRoute(route);
+    var activeId = getActiveTrailId() || (trails.length > 0 ? trails[0].id : null);
+
+    var activeTrail = null;
+    for (var i = 0; i < trails.length; i++) {
+      if (trails[i].id === activeId) { activeTrail = trails[i]; break; }
+    }
+    if (!activeTrail && trails.length > 0) activeTrail = trails[0];
+    var isCustom = activeTrail ? !activeTrail.isDefault : false;
+
+    var cardsHtml = trails.map(function(t, idx) {
+      var isActive = t.id === activeId;
+      var statusIcon = t.completed ? '🏆' : '🔒';
+      var statusClass = t.completed ? 'completed' : 'locked';
+      var isRenamed = !!(t.isDefault && t.originalName && t.name !== t.originalName);
+      var isCustom = !t.isDefault;
+      var shortName = getShortName(t.name, t.isDefault, isRenamed);
+      var trashBtn = '<button class="level-card-trash" data-trail-id="' + t.id + '" title="删除路线">🗑️</button>';
+      return (
+        '<div class="level-card ' + (isActive ? 'active ' : '') + statusClass + '" data-trail-id="' + t.id + '">' +
+          '<div class="level-card-status">' + statusIcon + '</div>' +
+          '<div class="level-card-number">LV.' + (idx + 1) + '</div>' +
+          '<div class="level-card-name" data-full-name="' + escapeHtml(t.name) + '" title="双击编辑名称">' + escapeHtml(shortName) + '</div>' +
+          trashBtn +
+        '</div>'
+      );
+    }).join('');
+
+    container.innerHTML =
+      '<div class="level-section-header">' +
+        '<span class="level-section-icon">⚔️</span>' +
+        '<span class="level-section-title">选择路线</span>' +
+        '<span class="level-section-sub">CHAPTER SELECT</span>' +
+      '</div>' +
+      '<div class="level-cards-container">' + cardsHtml + '</div>' +
+      '<div class="level-control-bar">' +
+        '<div class="level-current-name" id="level-current-name" title="点击编辑名称">' +
+          '<span class="level-current-label">当前路线:</span>' +
+          '<span class="level-current-text" data-trail-id="' + (activeTrail ? activeTrail.id : '') + '">' + escapeHtml(activeTrail ? activeTrail.name : '') + '</span>' +
+        '</div>' +
+        '<div class="level-action-group">' +
+          '<button id="trail-dir-btn" class="level-ctrl-btn" title="切换行进方向">' +
+            '<span class="ctrl-icon">' + (activeTrail && activeTrail.direction === -1 ? '⬅' : '➡') + '</span>' +
+          '</button>' +
+          '<button id="trail-complete-btn" class="level-ctrl-btn level-ctrl-trophy" title="标记为已通关">' +
+            '<span class="ctrl-icon">' + (activeTrail && activeTrail.completed ? '🏆' : '🔒') + '</span>' +
+          '</button>' +
+          '<button id="trail-info-btn" class="level-ctrl-btn level-ctrl-info" title="关卡详情">' +
+            '<span class="ctrl-icon">ⓘ</span>' +
+          '</button>' +
+          '<button id="trail-add-btn" class="level-ctrl-btn level-ctrl-add" title="新增自定义路线">+</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="level-edit-row" id="trail-edit-row" style="display:none">' +
+        '<input type="text" id="trail-name-input" class="level-name-input" value="' + escapeHtml(activeTrail ? activeTrail.name : '') + '" placeholder="输入路线名称...">' +
+        '<button id="trail-rename-btn" class="level-edit-btn level-edit-save" title="保存">✓</button>' +
+        '<button id="trail-delete-btn" class="level-edit-btn level-edit-del" title="删除">✕</button>' +
+      '</div>';
+
+    bindTrailSelectorEvents();
+  }
+
+  function escapeHtml(str) {
+    if (!str) return '';
+    var div = document.createElement('div');
+    div.appendChild(document.createTextNode(str));
+    return div.innerHTML;
+  }
+
+  var activeEditInput = null;
+  var cardClickTimer = null;
+
+  function removeInputSafe(input) {
+    if (!input || !input.parentNode) return;
+    try {
+      if (input.parentNode.contains(input)) {
+        input.parentNode.removeChild(input);
+      }
+    } catch(e) {}
+  }
+
+  function cancelInlineEdit() {
+    if (!activeEditInput) return;
+    var input = activeEditInput;
+    activeEditInput = null;
+    var placeholder = input._placeholder;
+    var originalText = input._originalText || '';
+    if (placeholder) {
+      try {
+        placeholder.textContent = originalText;
+        placeholder.style.display = '';
+      } catch(e) {}
+    }
+    removeInputSafe(input);
+  }
+
+  function commitInlineEdit(input) {
+    if (!input) return;
+    var trailId = input._trailId;
+    var newName = input.value.trim();
+    var placeholder = input._placeholder;
+    var originalText = input._originalText || '';
+    activeEditInput = null;
+    if (placeholder) {
+      try { placeholder.style.display = ''; } catch(e) {}
+    }
+    removeInputSafe(input);
+    if (!newName || newName === originalText) {
+      return;
+    }
+    if (typeof ThreeMap !== 'undefined' && ThreeMap.renameTrail) {
+      ThreeMap.renameTrail(trailId, newName);
+    }
+  }
+
+  function startInlineEdit(placeholderEl, trailId, initialValue, selectOnFocus) {
+    if (activeEditInput) {
+      commitInlineEdit(activeEditInput);
+    }
+    if (cardClickTimer) { clearTimeout(cardClickTimer); cardClickTimer = null; }
+    var card = placeholderEl.closest('.level-card');
+    if (card) {
+      card.style.overflow = 'visible';
+    }
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.value = initialValue || '';
+    input.maxLength = 10;
+    input.className = 'level-name-edit-input';
+    input._placeholder = placeholderEl;
+    input._trailId = trailId;
+    input._originalText = initialValue || '';
+    input._isCardName = !!placeholderEl.classList.contains('level-card-name');
+    placeholderEl.style.display = 'none';
+    placeholderEl.parentNode.insertBefore(input, placeholderEl.nextSibling);
+    activeEditInput = input;
+    var commit = function() { commitInlineEdit(input); };
+    var cancel = function() {
+      if (activeEditInput !== input) return;
+      cancelInlineEdit();
+    };
+    input.addEventListener('mousedown', function(e) {
+      e.stopPropagation();
+    });
+    input.addEventListener('click', function(e) {
+      e.stopPropagation();
+    });
+    input.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        input.blur();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        input.value = initialValue || '';
+        cancel();
+      }
+    });
+    input.addEventListener('blur', commit);
+    setTimeout(function() {
+      input.focus();
+      if (selectOnFocus) {
+        input.select();
+      } else {
+        input.setSelectionRange(input.value.length, input.value.length);
+      }
+    }, 0);
+  }
+
+  function bindTrailSelectorEvents() {
+    var cards = document.querySelectorAll('.level-card');
+    for (var ci = 0; ci < cards.length; ci++) {
+      (function(card) {
+        card.addEventListener('click', function(e) {
+          if (e.target.closest('.level-card-status')) return;
+          if (e.target.closest('.level-name-edit-input')) return;
+          if (e.target.closest('.level-card-trash')) return;
+          var trailId = card.getAttribute('data-trail-id');
+          if (!trailId) return;
+          var wasActive = card.classList.contains('active');
+          if (typeof ThreeMap !== 'undefined' && ThreeMap.setActiveTrail) {
+            ThreeMap.setActiveTrail(trailId);
+          }
+          if (cardClickTimer) { clearTimeout(cardClickTimer); cardClickTimer = null; }
+          var clickedName = !!e.target.closest('.level-card-name');
+          if (wasActive && !clickedName) {
+            (function(tid) {
+              cardClickTimer = setTimeout(function() {
+                cardClickTimer = null;
+                openTrailInfoModal(tid);
+              }, 260);
+            })(trailId);
+          }
+        });
+        var statusEl = card.querySelector('.level-card-status');
+        if (statusEl) {
+          statusEl.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var trailId = card.getAttribute('data-trail-id');
+            if (!trailId) return;
+            var isCompleted = card.classList.contains('completed');
+            if (typeof ThreeMap !== 'undefined' && ThreeMap.setTrailCompleted) {
+              ThreeMap.setTrailCompleted(trailId, !isCompleted);
+            }
+          });
+        }
+        var trashBtn = card.querySelector('.level-card-trash');
+        if (trashBtn) {
+          trashBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            e.preventDefault();
+            var trailId = trashBtn.getAttribute('data-trail-id');
+            if (!trailId) return;
+            var trail = null;
+            if (typeof ThreeMap !== 'undefined' && ThreeMap.getActiveTrail && ThreeMap.getAllTrails) {
+              var all = ThreeMap.getAllTrails();
+              for (var ti = 0; ti < all.length; ti++) {
+                if (all[ti].id === trailId) { trail = all[ti]; break; }
+              }
+            }
+            if (!trail) return;
+            if (confirm('确定要删除路线「' + trail.name + '」吗？此操作不可撤销。')) {
+              if (typeof ThreeMap !== 'undefined' && ThreeMap.deleteCustomTrail) {
+                ThreeMap.deleteCustomTrail(trailId);
+              }
+            }
+          });
+        }
+        var nameEl = card.querySelector('.level-card-name');
+        if (nameEl) {
+          (function(nEl) {
+            nEl.addEventListener('dblclick', function(e) {
+              e.stopPropagation();
+              e.preventDefault();
+              var trailId = card.getAttribute('data-trail-id');
+              if (!trailId) return;
+              var fullName = nEl.getAttribute('data-full-name') || nEl.textContent;
+              startInlineEdit(nEl, trailId, fullName, true);
+            });
+          })(nameEl);
+        }
+      })(cards[ci]);
+    }
+
+    var dirBtn = document.getElementById('trail-dir-btn');
+    if (dirBtn) {
+      dirBtn.addEventListener('click', function() {
+        var active = null;
+        if (typeof ThreeMap !== 'undefined' && ThreeMap.getActiveTrail) {
+          active = ThreeMap.getActiveTrail();
+        }
+        if (!active) return;
+        var newDir = active.direction === 1 ? -1 : 1;
+        if (typeof ThreeMap !== 'undefined' && ThreeMap.setTrailDirection) {
+          ThreeMap.setTrailDirection(active.id, newDir);
+        }
+      });
+    }
+
+    var completeBtn = document.getElementById('trail-complete-btn');
+    if (completeBtn) {
+      completeBtn.addEventListener('click', function() {
+        var active = null;
+        if (typeof ThreeMap !== 'undefined' && ThreeMap.getActiveTrail) {
+          active = ThreeMap.getActiveTrail();
+        }
+        if (!active) return;
+        if (typeof ThreeMap !== 'undefined' && ThreeMap.setTrailCompleted) {
+          ThreeMap.setTrailCompleted(active.id, !active.completed);
+        }
+      });
+    }
+
+    var trailInfoBtn = document.getElementById('trail-info-btn');
+    if (trailInfoBtn) {
+      trailInfoBtn.addEventListener('click', function() {
+        var active = null;
+        if (typeof ThreeMap !== 'undefined' && ThreeMap.getActiveTrail) {
+          active = ThreeMap.getActiveTrail();
+        }
+        if (active) openTrailInfoModal(active.id);
+      });
+    }
+
+    var addBtn = document.getElementById('trail-add-btn');
+    if (addBtn) {
+      addBtn.addEventListener('click', function() {
+        var name = prompt('⚔️ 输入新关卡名称：', '新路线');
+        if (name && name.trim()) {
+          if (typeof ThreeMap !== 'undefined' && ThreeMap.addCustomTrail) {
+            ThreeMap.addCustomTrail(name.trim());
+          }
+        }
+      });
+    }
+
+    var currentTextEl = document.querySelector('.level-current-text');
+    if (currentTextEl) {
+      currentTextEl.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var trailId = currentTextEl.getAttribute('data-trail-id');
+        if (!trailId) {
+          var active = null;
+          if (typeof ThreeMap !== 'undefined' && ThreeMap.getActiveTrail) {
+            active = ThreeMap.getActiveTrail();
+          }
+          if (active) trailId = active.id;
+        }
+        if (!trailId) return;
+        startInlineEdit(currentTextEl, trailId, currentTextEl.textContent, true);
+      });
+    }
+
+    var deleteBtn = document.getElementById('trail-delete-btn');
+    if (deleteBtn) {
+      deleteBtn.addEventListener('click', function() {
+        var active = null;
+        if (typeof ThreeMap !== 'undefined' && ThreeMap.getActiveTrail) {
+          active = ThreeMap.getActiveTrail();
+        }
+        if (!active) return;
+        if (!confirm('确定要删除路线「' + active.name + '」吗？此操作不可撤销。')) return;
+        if (typeof ThreeMap !== 'undefined' && ThreeMap.deleteCustomTrail) {
+          ThreeMap.deleteCustomTrail(active.id);
+        }
+      });
+    }
+  }
+
   function renderRoutePanel(routeId) {
     const panel = document.getElementById('route-panel');
     if (!panel) return;
@@ -23,18 +437,17 @@ const RouteModule = (function() {
 
     const gears = getGearsByIds(route.gearIds);
     const totalWeight = gears.reduce((sum, g) => sum + g.weight, 0);
+    const hasTerrain = !!(route.terrain);
 
     panel.innerHTML = `
       <button class="panel-close" id="route-panel-close">&times;</button>
       <div class="route-content">
-        <!-- 标题区 -->
         <div class="route-title">${route.name}</div>
         <div class="route-date">${route.date}</div>
         <div class="route-stars">
           ${renderStars(route.difficulty)}
         </div>
 
-        <!-- 数据栏 -->
         <div class="route-stats">
           <div class="route-stat-card">
             <div><span class="stat-num">${route.distance}</span><span class="stat-unit">km</span></div>
@@ -54,10 +467,16 @@ const RouteModule = (function() {
           </div>
         </div>
 
-        <!-- 正文 -->
-        <div class="route-description">${route.description}</div>
+        <div id="trail-selector-section" class="trail-selector-section"></div>
 
-        <!-- 图集 -->
+        <div class="route-desc-preview">
+          <div class="desc-preview-text">${escapeHtml(route.description.substring(0, 60))}${route.description.length > 60 ? '...' : ''}</div>
+          <button class="desc-info-btn" id="route-info-btn" title="查看完整攻略">
+            <span class="info-icon">ⓘ</span>
+            <span class="info-label">详情</span>
+          </button>
+        </div>
+
         ${route.images.length > 0 ? `
           <div class="route-gallery">
             ${route.images.map(img => `
@@ -67,7 +486,6 @@ const RouteModule = (function() {
           </div>
         ` : ''}
 
-        <!-- 配装区 -->
         <div class="route-gear-section">
           <div class="section-title">本次配装</div>
           <div class="route-gear-list">
@@ -84,9 +502,19 @@ const RouteModule = (function() {
         </div>
       </div>
     `;
+
+    var routeInfoBtn = document.getElementById('route-info-btn');
+    if (routeInfoBtn) {
+      routeInfoBtn.addEventListener('click', function() {
+        if (currentRouteId) openRouteInfoModal(currentRouteId);
+      });
+    }
+
+    if (hasTerrain) {
+      renderTrailSelector();
+    }
   }
 
-  // 渲染星级（山峰轮廓）
   function renderStars(count) {
     let html = '';
     for (let i = 1; i <= 5; i++) {
@@ -102,16 +530,12 @@ const RouteModule = (function() {
     return html;
   }
 
-  // 绑定事件
   function bindEvents() {
     document.addEventListener('click', function(e) {
-      // 关闭按钮
       if (e.target.id === 'route-panel-close') {
         closePanel();
         return;
       }
-
-      // 配装区装备点击
       const gearItem = e.target.closest('.route-gear-item');
       if (gearItem) {
         const gearId = gearItem.dataset.gearId;
@@ -123,16 +547,13 @@ const RouteModule = (function() {
     });
   }
 
-  // 打开面板
   function openPanel(routeId) {
     const panel = document.getElementById('route-panel');
     if (!panel) return;
-
     renderRoutePanel(routeId);
     panel.classList.add('open');
   }
 
-  // 关闭面板
   function closePanel() {
     const panel = document.getElementById('route-panel');
     if (panel) {
@@ -142,24 +563,18 @@ const RouteModule = (function() {
     MapModule.resetView();
   }
 
-  // 图片预览
   function openImagePreview(src) {
     const overlay = document.getElementById('image-overlay');
     if (!overlay) return;
-
     overlay.innerHTML = `
       <button class="overlay-close">&times;</button>
       <img src="${src}" alt="预览图片" onclick="event.stopPropagation()">
     `;
     overlay.classList.add('visible');
-
-    // 点击关闭
     overlay.querySelector('.overlay-close').addEventListener('click', closeImagePreview);
     overlay.addEventListener('click', function(e) {
       if (e.target === overlay) closeImagePreview();
     });
-
-    // ESC 关闭
     document.addEventListener('keydown', handleEscKey);
   }
 
@@ -174,13 +589,115 @@ const RouteModule = (function() {
   function handleEscKey(e) {
     if (e.key === 'Escape') {
       closeImagePreview();
+      closeInfoModal();
     }
   }
 
-  // 检查面板是否打开
   function isOpen() {
     const panel = document.getElementById('route-panel');
     return panel && panel.classList.contains('open');
+  }
+
+  function refreshTrailSelector() {
+    if (currentRouteId) {
+      renderTrailSelector();
+    }
+  }
+
+  function openInfoModal(htmlContent, opts) {
+    opts = opts || {};
+    var modal = document.getElementById('info-modal');
+    if (!modal) return;
+    var title = opts.title || '详情';
+    var icon = opts.icon || '📜';
+    var accentClass = opts.accent || 'gold';
+    modal.innerHTML =
+      '<div class="info-modal-backdrop" id="info-modal-backdrop"></div>' +
+      '<div class="info-modal-panel info-modal-' + accentClass + '">' +
+        '<button class="info-modal-close" id="info-modal-close">&times;</button>' +
+        '<div class="info-modal-header">' +
+          '<span class="info-modal-icon">' + icon + '</span>' +
+          '<span class="info-modal-title">' + escapeHtml(title) + '</span>' +
+        '</div>' +
+        '<div class="info-modal-body">' + htmlContent + '</div>' +
+        '<div class="info-modal-footer">' +
+          '<button class="info-modal-btn" id="info-modal-ok">确认</button>' +
+        '</div>' +
+      '</div>';
+    modal.classList.add('visible');
+    requestAnimationFrame(function() {
+      var panel = modal.querySelector('.info-modal-panel');
+      if (panel) panel.classList.add('in');
+    });
+    var close1 = document.getElementById('info-modal-close');
+    var close2 = document.getElementById('info-modal-ok');
+    var backdrop = document.getElementById('info-modal-backdrop');
+    if (close1) close1.addEventListener('click', closeInfoModal);
+    if (close2) close2.addEventListener('click', closeInfoModal);
+    if (backdrop) backdrop.addEventListener('click', closeInfoModal);
+  }
+
+  function closeInfoModal() {
+    var modal = document.getElementById('info-modal');
+    if (!modal) return;
+    var panel = modal.querySelector('.info-modal-panel');
+    if (panel) panel.classList.remove('in');
+    setTimeout(function() {
+      modal.classList.remove('visible');
+      modal.innerHTML = '';
+    }, 200);
+  }
+
+  function openRouteInfoModal(routeId) {
+    var route = getRouteById(routeId);
+    if (!route) return;
+    var statsHtml =
+      '<div class="info-stats-row">' +
+        '<div class="info-stat"><div class="info-stat-val">' + route.distance + '<span class="info-stat-unit">km</span></div><div class="info-stat-lbl">里程</div></div>' +
+        '<div class="info-stat"><div class="info-stat-val">' + route.elevation.toLocaleString() + '<span class="info-stat-unit">m</span></div><div class="info-stat-lbl">累计爬升</div></div>' +
+        '<div class="info-stat"><div class="info-stat-val">' + route.maxAltitude.toLocaleString() + '<span class="info-stat-unit">m</span></div><div class="info-stat-lbl">最高海拔</div></div>' +
+        '<div class="info-stat"><div class="info-stat-val">' + escapeHtml(route.difficultyLabel) + '</div><div class="info-stat-lbl">难度等级</div></div>' +
+      '</div>';
+    var descHtml = '<div class="info-desc">' + escapeHtml(route.description).replace(/\n/g, '<br>') + '</div>';
+    openInfoModal(statsHtml + descHtml, {
+      title: route.name + ' · 攻略详情',
+      icon: '🗺️',
+      accent: 'gold'
+    });
+  }
+
+  function openTrailInfoModal(trailId) {
+    var trail = null;
+    if (typeof ThreeMap !== 'undefined' && ThreeMap.getAllTrails) {
+      var all = ThreeMap.getAllTrails();
+      for (var i = 0; i < all.length; i++) {
+        if (all[i].id === trailId) { trail = all[i]; break; }
+      }
+    }
+    if (!trail) return;
+    var statusIcon = trail.completed ? '🏆' : '🔒';
+    var statusText = trail.completed ? '已通关' : '未解锁';
+    var dirText = trail.direction === -1 ? '逆向 ⬅' : '顺向 ➡';
+    var pointsList = (trail.points || []).map(function(p, idx) {
+      return '<div class="info-point-item">' +
+        '<span class="info-point-dot"></span>' +
+        '<span class="info-point-idx">' + (idx + 1) + '</span>' +
+        '<span class="info-point-name">' + escapeHtml(p.name || ('点' + (idx + 1))) + '</span>' +
+      '</div>';
+    }).join('');
+    var contentHtml =
+      '<div class="info-trail-banner ' + (trail.completed ? 'completed' : 'locked') + '">' +
+        '<span class="info-trail-status">' + statusIcon + ' ' + statusText + '</span>' +
+        '<span class="info-trail-dir">' + dirText + '</span>' +
+        (trail.isDefault ? '' : '<span class="info-trail-custom">✏️ 自定义</span>') +
+      '</div>' +
+      '<div class="info-section-title">途经点位</div>' +
+      '<div class="info-points-list">' + pointsList + '</div>';
+    openInfoModal(contentHtml, {
+      title: trail.name,
+      icon: trail.completed ? '🏆' : '⚔️',
+      accent: trail.completed ? 'gold' : 'steel'
+    });
   }
 
   return {
@@ -188,6 +705,7 @@ const RouteModule = (function() {
     openPanel,
     closePanel,
     openImagePreview,
-    isOpen
+    isOpen,
+    refreshTrailSelector
   };
 })();
