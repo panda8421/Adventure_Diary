@@ -4028,6 +4028,98 @@ var ThreeMap = (function() {
     onTrailChanged = cb;
   }
 
+  function exportAllRouteData() {
+    var exportData = {};
+    try {
+      for (var i = 0; i < localStorage.length; i++) {
+        var key = localStorage.key(i);
+        if (key && key.indexOf(STORAGE_KEY_PREFIX) === 0) {
+          var raw = localStorage.getItem(key);
+          if (raw) {
+            try {
+              exportData[key] = JSON.parse(raw);
+            } catch(e) {
+              exportData[key] = raw;
+            }
+          }
+        }
+      }
+    } catch(e) {
+      console.warn('[Export] 导出数据失败:', e);
+      return null;
+    }
+    return {
+      version: '1.0',
+      exportTime: new Date().toISOString(),
+      data: exportData
+    };
+  }
+
+  function importRouteData(importObj) {
+    if (!importObj || !importObj.data) return false;
+    try {
+      var importData = importObj.data;
+      var importedCount = 0;
+      for (var key in importData) {
+        if (importData.hasOwnProperty(key) && key.indexOf(STORAGE_KEY_PREFIX) === 0) {
+          var value = importData[key];
+          localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
+          importedCount++;
+        }
+      }
+      if (currentMountainRoute) {
+        var routeId = currentMountainRoute.id;
+        workingCustomTrails = null;
+        activeTrailId = null;
+        trailDirectionOverrides = {};
+        trailCompletedStatus = {};
+        trailNameOverrides = {};
+        deletedDefaultTrailIds = {};
+        workingRiverPoints = null;
+        var savedMod = loadAllTerrainMod(routeId);
+        if (savedMod) {
+          if (savedMod.riverPoints && savedMod.riverPoints.length >= 2) {
+            workingRiverPoints = savedMod.riverPoints.map(function(p) {
+              return { x: p.x, y: p.y };
+            });
+          }
+          if (savedMod.riverWidth !== undefined) riverWidth = savedMod.riverWidth;
+          if (savedMod.riverDepth !== undefined) riverDepth = savedMod.riverDepth;
+          if (savedMod.customTrails) {
+            workingCustomTrails = savedMod.customTrails.map(function(t) {
+              return { id: t.id, name: t.name, direction: t.direction || 1, points: (t.points || []).map(function(p) { return { x: p.x, y: p.y, name: p.name }; }) };
+            });
+          }
+          if (savedMod.activeTrailId) {
+            activeTrailId = savedMod.activeTrailId;
+          }
+          if (savedMod.trailDirectionOverrides) {
+            trailDirectionOverrides = JSON.parse(JSON.stringify(savedMod.trailDirectionOverrides));
+          }
+          if (savedMod.trailCompletedStatus) {
+            trailCompletedStatus = JSON.parse(JSON.stringify(savedMod.trailCompletedStatus));
+          }
+          if (savedMod.trailNameOverrides) {
+            trailNameOverrides = JSON.parse(JSON.stringify(savedMod.trailNameOverrides));
+          }
+          if (savedMod.deletedDefaultTrailIds) {
+            deletedDefaultTrailIds = JSON.parse(JSON.stringify(savedMod.deletedDefaultTrailIds));
+          }
+        }
+        initActiveTrail();
+        if (workingRiverPoints && workingRiverPoints.length >= 2) {
+          rebuildRiverRender();
+        }
+        if (mountainGroup) rebuildTrailRender();
+        if (onTrailChanged) onTrailChanged();
+      }
+      return importedCount > 0;
+    } catch(e) {
+      console.warn('[Import] 导入数据失败:', e);
+      return false;
+    }
+  }
+
   return {
     init: init,
     addMarkers: addMarkers,
@@ -4048,6 +4140,8 @@ var ThreeMap = (function() {
     resetTrailName: resetTrailName,
     setTrailDirection: setTrailDirection,
     setTrailCompleted: setTrailCompleted,
-    setOnTrailChangedCallback: setOnTrailChangedCallback
+    setOnTrailChangedCallback: setOnTrailChangedCallback,
+    exportAllRouteData: exportAllRouteData,
+    importRouteData: importRouteData
   };
 })();

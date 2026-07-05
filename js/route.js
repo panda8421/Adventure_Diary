@@ -149,6 +149,9 @@ const RouteModule = (function() {
             '<span class="ctrl-icon">ⓘ</span>' +
           '</button>' +
           '<button id="trail-add-btn" class="level-ctrl-btn level-ctrl-add" title="新增自定义路线">+</button>' +
+          '<button id="trail-export-btn" class="level-ctrl-btn level-ctrl-export" title="导出路线数据">⬇</button>' +
+          '<button id="trail-import-btn" class="level-ctrl-btn level-ctrl-import" title="导入路线数据">⬆</button>' +
+          '<input type="file" id="trail-import-file" accept=".json" style="display:none">' +
         '</div>' +
       '</div>' +
       '<div class="level-edit-row" id="trail-edit-row" style="display:none">' +
@@ -390,6 +393,70 @@ const RouteModule = (function() {
             ThreeMap.addCustomTrail(name.trim());
           }
         }
+      });
+    }
+
+    var exportBtn = document.getElementById('trail-export-btn');
+    if (exportBtn) {
+      exportBtn.addEventListener('click', function() {
+        if (typeof ThreeMap === 'undefined' || !ThreeMap.exportAllRouteData) {
+          alert('导出功能不可用');
+          return;
+        }
+        var exportData = ThreeMap.exportAllRouteData();
+        if (!exportData) {
+          alert('导出失败：没有数据可导出');
+          return;
+        }
+        var jsonStr = JSON.stringify(exportData, null, 2);
+        var blob = new Blob([jsonStr], { type: 'application/json' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        var dateStr = new Date().toISOString().slice(0, 10);
+        a.href = url;
+        a.download = 'adventure_diary_backup_' + dateStr + '.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      });
+    }
+
+    var importBtn = document.getElementById('trail-import-btn');
+    var importFile = document.getElementById('trail-import-file');
+    if (importBtn && importFile) {
+      importBtn.addEventListener('click', function() {
+        importFile.click();
+      });
+      importFile.addEventListener('change', function(e) {
+        var file = e.target.files && e.target.files[0];
+        if (!file) return;
+        if (!confirm('导入数据将覆盖当前浏览器中的路线数据，确定继续吗？')) {
+          importFile.value = '';
+          return;
+        }
+        var reader = new FileReader();
+        reader.onload = function(evt) {
+          try {
+            var data = JSON.parse(evt.target.result);
+            if (typeof ThreeMap !== 'undefined' && ThreeMap.importRouteData) {
+              var success = ThreeMap.importRouteData(data);
+              if (success) {
+                alert('导入成功！路线数据已更新。');
+              } else {
+                alert('导入失败：数据格式无效');
+              }
+            }
+          } catch(err) {
+            alert('导入失败：文件格式错误 - ' + err.message);
+          }
+          importFile.value = '';
+        };
+        reader.onerror = function() {
+          alert('导入失败：无法读取文件');
+          importFile.value = '';
+        };
+        reader.readAsText(file);
       });
     }
 
