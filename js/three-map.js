@@ -472,19 +472,31 @@ var ThreeMap = (function() {
   }
 
   function loadGeoJSON(callback) {
+    var localUrl = 'data/china.json';
     var geoUrl = 'https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json';
 
-    // 尝试 fetch 加载
-    fetch(geoUrl)
-      .then(function(res) { return res.json(); })
+    fetch(localUrl)
+      .then(function(res) {
+        if (!res.ok) throw new Error('Local file not found');
+        return res.json();
+      })
       .then(function(data) {
         chinaGeoJSON = data;
-        console.log('[ThreeMap] GeoJSON 加载成功 (fetch)');
+        console.log('[ThreeMap] GeoJSON 加载成功 (本地)');
         callback();
       })
       .catch(function() {
-        // 降级到 JSONP
-        loadGeoJSONByJSONP(callback);
+        console.log('[ThreeMap] 本地GeoJSON加载失败，尝试远程加载...');
+        fetch(geoUrl)
+          .then(function(res) { return res.json(); })
+          .then(function(data) {
+            chinaGeoJSON = data;
+            console.log('[ThreeMap] GeoJSON 加载成功 (fetch)');
+            callback();
+          })
+          .catch(function() {
+            loadGeoJSONByJSONP(callback);
+          });
       });
   }
 
