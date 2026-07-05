@@ -5,6 +5,34 @@
 
 const RouteModule = (function() {
   let currentRouteId = null;
+  var ROUTE_STATS_KEY = 'adventure_diary_route_stats';
+  var routeStatsOverrides = {};
+
+  try {
+    var savedStats = localStorage.getItem(ROUTE_STATS_KEY);
+    if (savedStats) routeStatsOverrides = JSON.parse(savedStats) || {};
+  } catch(e) { routeStatsOverrides = {}; }
+
+  function saveRouteStats() {
+    try { localStorage.setItem(ROUTE_STATS_KEY, JSON.stringify(routeStatsOverrides)); } catch(e) {}
+  }
+
+  function getRouteStats(route) {
+    if (!route) return { distance: 0, elevation: 0, maxAltitude: 0, difficultyLabel: '' };
+    var overrides = routeStatsOverrides[route.id] || {};
+    return {
+      distance: overrides.distance !== undefined ? overrides.distance : route.distance,
+      elevation: overrides.elevation !== undefined ? overrides.elevation : route.elevation,
+      maxAltitude: overrides.maxAltitude !== undefined ? overrides.maxAltitude : route.maxAltitude,
+      difficultyLabel: overrides.difficultyLabel !== undefined ? overrides.difficultyLabel : route.difficultyLabel
+    };
+  }
+
+  function setRouteStat(routeId, field, value) {
+    if (!routeStatsOverrides[routeId]) routeStatsOverrides[routeId] = {};
+    routeStatsOverrides[routeId][field] = value;
+    saveRouteStats();
+  }
 
   function init() {
     bindEvents();
@@ -442,7 +470,8 @@ const RouteModule = (function() {
             if (typeof ThreeMap !== 'undefined' && ThreeMap.importRouteData) {
               var success = ThreeMap.importRouteData(data);
               if (success) {
-                alert('导入成功！路线数据已更新。');
+                alert('导入成功！页面将刷新以加载新数据。');
+                location.reload();
               } else {
                 alert('导入失败：数据格式无效');
               }
@@ -505,6 +534,7 @@ const RouteModule = (function() {
     const gears = getGearsByIds(route.gearIds);
     const totalWeight = gears.reduce((sum, g) => sum + g.weight, 0);
     const hasTerrain = !!(route.terrain);
+    const stats = getRouteStats(route);
 
     panel.innerHTML = `
       <button class="panel-close" id="route-panel-close">&times;</button>
@@ -516,20 +546,20 @@ const RouteModule = (function() {
         </div>
 
         <div class="route-stats">
-          <div class="route-stat-card">
-            <div><span class="stat-num">${route.distance}</span><span class="stat-unit">km</span></div>
+          <div class="route-stat-card editable-stat" data-field="distance" data-route-id="${routeId}" title="点击编辑">
+            <div><span class="stat-num">${stats.distance}</span><span class="stat-unit">km</span></div>
             <div class="stat-label">里程</div>
           </div>
-          <div class="route-stat-card">
-            <div><span class="stat-num">${route.elevation.toLocaleString()}</span><span class="stat-unit">m</span></div>
+          <div class="route-stat-card editable-stat" data-field="elevation" data-route-id="${routeId}" title="点击编辑">
+            <div><span class="stat-num">${Number(stats.elevation).toLocaleString()}</span><span class="stat-unit">m</span></div>
             <div class="stat-label">累计爬升</div>
           </div>
-          <div class="route-stat-card">
-            <div><span class="stat-num">${route.maxAltitude.toLocaleString()}</span><span class="stat-unit">m</span></div>
+          <div class="route-stat-card editable-stat" data-field="maxAltitude" data-route-id="${routeId}" title="点击编辑">
+            <div><span class="stat-num">${Number(stats.maxAltitude).toLocaleString()}</span><span class="stat-unit">m</span></div>
             <div class="stat-label">最高海拔</div>
           </div>
-          <div class="route-stat-card">
-            <div><span class="stat-num">${route.difficultyLabel}</span></div>
+          <div class="route-stat-card editable-stat" data-field="difficultyLabel" data-route-id="${routeId}" title="点击编辑">
+            <div><span class="stat-num">${escapeHtml(stats.difficultyLabel)}</span></div>
             <div class="stat-label">难度等级</div>
           </div>
         </div>
@@ -611,7 +641,97 @@ const RouteModule = (function() {
         }
         return;
       }
+      var statCard = e.target.closest('.editable-stat');
+      if (statCard) {
+        var field = statCard.getAttribute('data-field');
+        var rId = statCard.getAttribute('data-route-id');
+        if (field && rId) {
+          startEditStat(statCard, rId, field);
+        }
+        return;
+      }
     });
+  }
+
+  function startEditStat(card, routeId, field) {
+    if (card.classList.contains('editing')) return;
+    var route = getRouteById(routeId);
+    if (!route) return;
+    var stats = getRouteStats(route);
+    var currentVal = stats[field];
+    var numEl = card.querySelector('.stat-num');
+    var unitEl = card.querySelector('.stat-unit');
+    var labelEl = card.querySelector('.stat-label');
+    if (!numEl) return;
+
+    var isNumeric = (field !== 'difficultyLabel');
+    var displayVal = isNumeric ? String(currentVal).replace(/,/g, '') : currentVal;
+    var unitText = unitEl ? unitEl.textContent : '';
+    var labelText = labelEl ? labelEl.textContent : '';
+
+    card.classList.add('editing');
+    var originalHTML = card.innerHTML;
+
+    var input = document.createElement('input');
+    input.type = isNumeric ? 'number' : 'text';
+    input.className = 'stat-edit-input';
+    input.value = displayVal;
+    if (isNumeric) {
+      input.step = field === 'distance' ? '0.1' : '1';
+      input.min = '0';
+    } else {
+      input.maxLength = 10;
+    }
+
+    card.innerHTML = '';
+    var wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;width:100%;';
+    var valWrap = document.createElement('div');
+    valWrap.style.cssText = 'display:flex;align-items:baseline;gap:2px;width:100%;justify-content:center;';
+    valWrap.appendChild(input);
+    if (unitText) {
+      var unitSpan = document.createElement('span');
+      unitSpan.className = 'stat-unit';
+      unitSpan.textContent = unitText;
+      valWrap.appendChild(unitSpan);
+    }
+    wrap.appendChild(valWrap);
+    var lbl = document.createElement('div');
+    lbl.className = 'stat-label';
+    lbl.textContent = labelText;
+    wrap.appendChild(lbl);
+    card.appendChild(wrap);
+
+    setTimeout(function() { input.focus(); input.select(); }, 10);
+
+    function finishEdit(save) {
+      if (!card.classList.contains('editing')) return;
+      card.classList.remove('editing');
+      if (save) {
+        var newVal = input.value.trim();
+        if (newVal !== '') {
+          if (isNumeric) {
+            var numVal = parseFloat(newVal);
+            if (!isNaN(numVal) && numVal >= 0) {
+              setRouteStat(routeId, field, numVal);
+            }
+          } else {
+            if (newVal.length > 0) {
+              setRouteStat(routeId, field, newVal);
+            }
+          }
+        }
+      }
+      renderRoutePanel(routeId);
+    }
+
+    input.addEventListener('blur', function() { finishEdit(true); });
+    input.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { e.preventDefault(); finishEdit(true); }
+      else if (e.key === 'Escape') { e.preventDefault(); finishEdit(false); }
+    });
+    input.addEventListener('click', function(e) { e.stopPropagation(); });
+    input.addEventListener('mousedown', function(e) { e.stopPropagation(); });
   }
 
   function openPanel(routeId) {
@@ -718,12 +838,13 @@ const RouteModule = (function() {
   function openRouteInfoModal(routeId) {
     var route = getRouteById(routeId);
     if (!route) return;
+    var stats = getRouteStats(route);
     var statsHtml =
       '<div class="info-stats-row">' +
-        '<div class="info-stat"><div class="info-stat-val">' + route.distance + '<span class="info-stat-unit">km</span></div><div class="info-stat-lbl">里程</div></div>' +
-        '<div class="info-stat"><div class="info-stat-val">' + route.elevation.toLocaleString() + '<span class="info-stat-unit">m</span></div><div class="info-stat-lbl">累计爬升</div></div>' +
-        '<div class="info-stat"><div class="info-stat-val">' + route.maxAltitude.toLocaleString() + '<span class="info-stat-unit">m</span></div><div class="info-stat-lbl">最高海拔</div></div>' +
-        '<div class="info-stat"><div class="info-stat-val">' + escapeHtml(route.difficultyLabel) + '</div><div class="info-stat-lbl">难度等级</div></div>' +
+        '<div class="info-stat"><div class="info-stat-val">' + stats.distance + '<span class="info-stat-unit">km</span></div><div class="info-stat-lbl">里程</div></div>' +
+        '<div class="info-stat"><div class="info-stat-val">' + Number(stats.elevation).toLocaleString() + '<span class="info-stat-unit">m</span></div><div class="info-stat-lbl">累计爬升</div></div>' +
+        '<div class="info-stat"><div class="info-stat-val">' + Number(stats.maxAltitude).toLocaleString() + '<span class="info-stat-unit">m</span></div><div class="info-stat-lbl">最高海拔</div></div>' +
+        '<div class="info-stat"><div class="info-stat-val">' + escapeHtml(stats.difficultyLabel) + '</div><div class="info-stat-lbl">难度等级</div></div>' +
       '</div>';
     var descHtml = '<div class="info-desc">' + escapeHtml(route.description).replace(/\n/g, '<br>') + '</div>';
     openInfoModal(statsHtml + descHtml, {

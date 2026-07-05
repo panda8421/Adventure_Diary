@@ -4045,7 +4045,7 @@ var ThreeMap = (function() {
     try {
       for (var i = 0; i < localStorage.length; i++) {
         var key = localStorage.key(i);
-        if (key && key.indexOf(STORAGE_KEY_PREFIX) === 0) {
+        if (key && (key.indexOf(STORAGE_KEY_PREFIX) === 0 || key === 'adventure_diary_route_stats')) {
           var raw = localStorage.getItem(key);
           if (raw) {
             try {
@@ -4073,7 +4073,7 @@ var ThreeMap = (function() {
       var importData = importObj.data;
       var importedCount = 0;
       for (var key in importData) {
-        if (importData.hasOwnProperty(key) && key.indexOf(STORAGE_KEY_PREFIX) === 0) {
+        if (importData.hasOwnProperty(key) && (key.indexOf(STORAGE_KEY_PREFIX) === 0 || key === 'adventure_diary_route_stats')) {
           var value = importData[key];
           localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
           importedCount++;

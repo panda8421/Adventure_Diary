@@ -454,6 +454,69 @@ html, body {
   margin-top: 4px;
 }
 
+#route-panel .route-stat-card.editable-stat {
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+#route-panel .route-stat-card.editable-stat:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(180, 140, 60, 0.4);
+  transform: translateY(-1px);
+}
+
+#route-panel .route-stat-card.editable-stat:hover::after {
+  content: '✎';
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  font-size: 10px;
+  color: var(--accent);
+  opacity: 0.7;
+}
+
+#route-panel .route-stat-card.editable-stat.editing {
+  background: rgba(180, 140, 60, 0.1);
+  border-color: rgba(180, 140, 60, 0.6);
+  cursor: text;
+}
+
+#route-panel .route-stat-card.editable-stat.editing::after {
+  display: none;
+}
+
+#route-panel .stat-edit-input {
+  width: 100%;
+  max-width: 70px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(180, 140, 60, 0.5);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 700;
+  font-family: inherit;
+  text-align: center;
+  padding: 2px 4px;
+  outline: none;
+  box-shadow: 0 0 8px rgba(180, 140, 60, 0.2);
+}
+
+#route-panel .stat-edit-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 12px rgba(180, 140, 60, 0.4);
+}
+
+#route-panel .stat-edit-input::-webkit-outer-spin-button,
+#route-panel .stat-edit-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+#route-panel .stat-edit-input[type=number] {
+  -moz-appearance: textfield;
+}
+
 /* 正文 */
 #route-panel .route-description {
   font-size: 14px;
