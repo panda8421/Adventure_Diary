@@ -639,8 +639,10 @@ const RouteModule = (function() {
   }
 
   function renderStar(count, filled, interactive, routeId, field, starIndex) {
-    var fillColor = filled ? 'var(--accent)' : 'none';
-    var strokeColor = filled ? 'var(--accent)' : 'var(--text-tertiary)';
+    var goldColor = '#ffd700';
+    var emptyColor = '#555';
+    var fillColor = filled ? goldColor : 'none';
+    var strokeColor = filled ? goldColor : emptyColor;
     var className = filled ? 'filled' : 'empty';
     if (interactive) className += ' interactive-star';
     var dataAttrs = interactive ? ' data-route-id="' + routeId + '" data-field="' + field + '" data-value="' + starIndex + '"' : '';

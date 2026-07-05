@@ -441,13 +441,13 @@ html, body {
 }
 
 #route-panel .rating-stars svg.filled {
-  stroke: var(--accent);
-  fill: var(--accent);
-  filter: drop-shadow(0 0 3px rgba(180, 140, 60, 0.5));
+  stroke: #ffd700;
+  fill: #ffd700;
+  filter: drop-shadow(0 0 4px rgba(255, 215, 0, 0.6));
 }
 
 #route-panel .rating-stars svg.empty {
-  stroke: var(--text-tertiary);
+  stroke: #555;
   fill: none;
 }
 
@@ -484,12 +484,12 @@ html, body {
 }
 
 .info-rating-stars svg.filled {
-  stroke: var(--accent);
-  fill: var(--accent);
+  stroke: #ffd700;
+  fill: #ffd700;
 }
 
 .info-rating-stars svg.empty {
-  stroke: var(--text-tertiary);
+  stroke: #555;
   fill: none;
 }
 
