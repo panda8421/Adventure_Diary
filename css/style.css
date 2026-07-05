@@ -399,23 +399,96 @@ html, body {
   margin-bottom: 16px;
 }
 
-#route-panel .route-stars {
-  display: flex;
-  gap: 3px;
-  margin-bottom: 24px;
+#route-panel .route-ratings {
+  margin-bottom: 20px;
 }
 
-#route-panel .route-stars svg {
+#route-panel .rating-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+#route-panel .rating-row:last-child {
+  margin-bottom: 0;
+}
+
+#route-panel .rating-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+  width: 36px;
+  flex-shrink: 0;
+}
+
+#route-panel .rating-stars {
+  display: flex;
+  gap: 4px;
+}
+
+#route-panel .rating-stars svg {
   width: 22px;
   height: 22px;
+  transition: transform 0.15s ease;
 }
 
-#route-panel .route-stars svg.filled {
+#route-panel .rating-stars svg.interactive-star {
+  cursor: pointer;
+}
+
+#route-panel .rating-stars svg.interactive-star:hover {
+  transform: scale(1.2);
+}
+
+#route-panel .rating-stars svg.filled {
+  stroke: var(--accent);
+  fill: var(--accent);
+  filter: drop-shadow(0 0 3px rgba(180, 140, 60, 0.5));
+}
+
+#route-panel .rating-stars svg.empty {
+  stroke: var(--text-tertiary);
+  fill: none;
+}
+
+/* 模态框中的评级样式 */
+.info-ratings-row {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 16px;
+  padding: 12px;
+  background: rgba(180, 140, 60, 0.08);
+  border-radius: 8px;
+  border: 1px solid rgba(180, 140, 60, 0.2);
+}
+
+.info-rating-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.info-rating-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.info-rating-stars {
+  display: flex;
+  gap: 2px;
+}
+
+.info-rating-stars svg {
+  width: 18px;
+  height: 18px;
+}
+
+.info-rating-stars svg.filled {
   stroke: var(--accent);
   fill: var(--accent);
 }
 
-#route-panel .route-stars svg.empty {
+.info-rating-stars svg.empty {
   stroke: var(--text-tertiary);
   fill: none;
 }

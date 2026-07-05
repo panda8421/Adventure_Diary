@@ -6,15 +6,26 @@
 const RouteModule = (function() {
   let currentRouteId = null;
   var ROUTE_STATS_KEY = 'adventure_diary_route_stats';
+  var ROUTE_RATINGS_KEY = 'adventure_diary_route_ratings';
   var routeStatsOverrides = {};
+  var routeRatingsOverrides = {};
 
   try {
     var savedStats = localStorage.getItem(ROUTE_STATS_KEY);
     if (savedStats) routeStatsOverrides = JSON.parse(savedStats) || {};
   } catch(e) { routeStatsOverrides = {}; }
 
+  try {
+    var savedRatings = localStorage.getItem(ROUTE_RATINGS_KEY);
+    if (savedRatings) routeRatingsOverrides = JSON.parse(savedRatings) || {};
+  } catch(e) { routeRatingsOverrides = {}; }
+
   function saveRouteStats() {
     try { localStorage.setItem(ROUTE_STATS_KEY, JSON.stringify(routeStatsOverrides)); } catch(e) {}
+  }
+
+  function saveRouteRatings() {
+    try { localStorage.setItem(ROUTE_RATINGS_KEY, JSON.stringify(routeRatingsOverrides)); } catch(e) {}
   }
 
   function getRouteStats(route) {
@@ -26,6 +37,22 @@ const RouteModule = (function() {
       maxAltitude: overrides.maxAltitude !== undefined ? overrides.maxAltitude : route.maxAltitude,
       difficultyLabel: overrides.difficultyLabel !== undefined ? overrides.difficultyLabel : route.difficultyLabel
     };
+  }
+
+  function getRouteRatings(route) {
+    if (!route) return { scenery: 3, difficulty: 1 };
+    var overrides = routeRatingsOverrides[route.id] || {};
+    var defaultScenery = route.scenery !== undefined ? route.scenery : route.difficulty;
+    return {
+      scenery: overrides.scenery !== undefined ? overrides.scenery : defaultScenery,
+      difficulty: overrides.difficulty !== undefined ? overrides.difficulty : route.difficulty
+    };
+  }
+
+  function setRouteRating(routeId, field, value) {
+    if (!routeRatingsOverrides[routeId]) routeRatingsOverrides[routeId] = {};
+    routeRatingsOverrides[routeId][field] = value;
+    saveRouteRatings();
   }
 
   function setRouteStat(routeId, field, value) {
@@ -535,15 +562,14 @@ const RouteModule = (function() {
     const totalWeight = gears.reduce((sum, g) => sum + g.weight, 0);
     const hasTerrain = !!(route.terrain);
     const stats = getRouteStats(route);
+    const ratings = getRouteRatings(route);
 
     panel.innerHTML = `
       <button class="panel-close" id="route-panel-close">&times;</button>
       <div class="route-content">
         <div class="route-title">${route.name}</div>
         <div class="route-date">${route.date}</div>
-        <div class="route-stars">
-          ${renderStars(route.difficulty)}
-        </div>
+        ${renderRatings(ratings, routeId)}
 
         <div class="route-stats">
           <div class="route-stat-card editable-stat" data-field="distance" data-route-id="${routeId}" title="点击编辑">
@@ -612,25 +638,63 @@ const RouteModule = (function() {
     }
   }
 
-  function renderStars(count) {
+  function renderStar(count, filled, interactive, routeId, field, starIndex) {
+    var fillColor = filled ? 'var(--accent)' : 'none';
+    var strokeColor = filled ? 'var(--accent)' : 'var(--text-tertiary)';
+    var className = filled ? 'filled' : 'empty';
+    if (interactive) className += ' interactive-star';
+    var dataAttrs = interactive ? ' data-route-id="' + routeId + '" data-field="' + field + '" data-value="' + starIndex + '"' : '';
+    return '<svg viewBox="0 0 24 24" fill="' + fillColor + '" stroke="' + strokeColor + '" stroke-width="1.5" class="' + className + '"' + dataAttrs + '>' +
+      '<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>' +
+    '</svg>';
+  }
+
+  function renderStars(count, interactive, routeId, field) {
     let html = '';
     for (let i = 1; i <= 5; i++) {
       const filled = i <= count;
-      html += `
-        <svg viewBox="0 0 24 24" fill="${filled ? 'var(--accent)' : 'none'}"
-             stroke="${filled ? 'var(--accent)' : 'var(--text-tertiary)'}" stroke-width="1.5"
-             class="${filled ? 'filled' : 'empty'}">
-          <path d="M12 2L2 22h20L12 2z"/>
-        </svg>
-      `;
+      html += renderStar(count, filled, interactive, routeId, field, i);
     }
     return html;
+  }
+
+  function renderRatingRow(label, count, routeId, field) {
+    return '<div class="rating-row">' +
+      '<span class="rating-label">' + label + '</span>' +
+      '<div class="rating-stars">' + renderStars(count, true, routeId, field) + '</div>' +
+    '</div>';
+  }
+
+  function renderRatings(ratings, routeId) {
+    return '<div class="route-ratings">' +
+      renderRatingRow('风景', ratings.scenery, routeId, 'scenery') +
+      renderRatingRow('难度', ratings.difficulty, routeId, 'difficulty') +
+    '</div>';
   }
 
   function bindEvents() {
     document.addEventListener('click', function(e) {
       if (e.target.id === 'route-panel-close') {
         closePanel();
+        return;
+      }
+      var starEl = e.target.closest('.interactive-star');
+      if (starEl) {
+        var routeId = starEl.getAttribute('data-route-id');
+        var field = starEl.getAttribute('data-field');
+        var value = parseInt(starEl.getAttribute('data-value'), 10);
+        if (routeId && field && !isNaN(value)) {
+          setRouteRating(routeId, field, value);
+          var route = getRouteById(routeId);
+          if (route) {
+            var ratings = getRouteRatings(route);
+            var starsContainer = starEl.closest('.rating-stars');
+            if (starsContainer) {
+              var newHtml = renderStars(ratings[field], true, routeId, field);
+              starsContainer.innerHTML = newHtml;
+            }
+          }
+        }
         return;
       }
       const gearItem = e.target.closest('.route-gear-item');
@@ -839,6 +903,12 @@ const RouteModule = (function() {
     var route = getRouteById(routeId);
     if (!route) return;
     var stats = getRouteStats(route);
+    var ratings = getRouteRatings(route);
+    var ratingsHtml =
+      '<div class="info-ratings-row">' +
+        '<div class="info-rating-item"><span class="info-rating-label">风景</span><span class="info-rating-stars">' + renderStars(ratings.scenery, false) + '</span></div>' +
+        '<div class="info-rating-item"><span class="info-rating-label">难度</span><span class="info-rating-stars">' + renderStars(ratings.difficulty, false) + '</span></div>' +
+      '</div>';
     var statsHtml =
       '<div class="info-stats-row">' +
         '<div class="info-stat"><div class="info-stat-val">' + stats.distance + '<span class="info-stat-unit">km</span></div><div class="info-stat-lbl">里程</div></div>' +
@@ -847,7 +917,7 @@ const RouteModule = (function() {
         '<div class="info-stat"><div class="info-stat-val">' + escapeHtml(stats.difficultyLabel) + '</div><div class="info-stat-lbl">难度等级</div></div>' +
       '</div>';
     var descHtml = '<div class="info-desc">' + escapeHtml(route.description).replace(/\n/g, '<br>') + '</div>';
-    openInfoModal(statsHtml + descHtml, {
+    openInfoModal(ratingsHtml + statsHtml + descHtml, {
       title: route.name + ' · 攻略详情',
       icon: '🗺️',
       accent: 'gold'
