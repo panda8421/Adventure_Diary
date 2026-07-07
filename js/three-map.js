@@ -1955,6 +1955,7 @@ var ThreeMap = (function() {
     var data = { segments: segments, deltas: deltas };
     try {
       localStorage.setItem(getStorageKey(currentMountainRoute.id), JSON.stringify(data));
+      if (typeof SyncModule !== 'undefined' && SyncModule.markDirty) SyncModule.markDirty('terrainMods');
     } catch(e) {}
   }
 
@@ -2040,6 +2041,7 @@ var ThreeMap = (function() {
     }
     try {
       localStorage.setItem(getStorageKey(currentMountainRoute.id), JSON.stringify(data));
+      if (typeof SyncModule !== 'undefined' && SyncModule.markDirty) SyncModule.markDirty('terrainMods');
       showEditorToast('地形、路径和河流已保存');
     } catch(e) {
       showEditorToast('保存失败');
@@ -3103,6 +3105,7 @@ var ThreeMap = (function() {
         delete existing.deletedDefaultTrailIds;
       }
       localStorage.setItem(key, JSON.stringify(existing));
+      if (typeof SyncModule !== 'undefined' && SyncModule.markDirty) SyncModule.markDirty('terrainMods');
     } catch(e) { console.warn('[Trail] saveActiveTrailOnly error:', e); }
   }
 

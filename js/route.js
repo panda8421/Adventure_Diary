@@ -22,10 +22,12 @@ const RouteModule = (function() {
 
   function saveRouteStats() {
     try { localStorage.setItem(ROUTE_STATS_KEY, JSON.stringify(routeStatsOverrides)); } catch(e) {}
+    if (typeof SyncModule !== 'undefined' && SyncModule.markDirty) SyncModule.markDirty('routeStats');
   }
 
   function saveRouteRatings() {
     try { localStorage.setItem(ROUTE_RATINGS_KEY, JSON.stringify(routeRatingsOverrides)); } catch(e) {}
+    if (typeof SyncModule !== 'undefined' && SyncModule.markDirty) SyncModule.markDirty('routeRatings');
   }
 
   function getRouteStats(route) {

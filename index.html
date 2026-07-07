@@ -8,6 +8,29 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Press+Start+2P&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
+  <style>
+    #sync-cloud-btn:hover { background: rgba(40,80,140,0.9) !important; transform: scale(1.08); box-shadow: 0 4px 20px rgba(100,150,255,0.3); }
+    #sync-cloud-btn.has-changes { border-color: rgba(255,200,50,0.8) !important; animation: syncPulse 2s infinite; }
+    #sync-cloud-btn.has-changes { filter: drop-shadow(0 0 6px rgba(255,200,50,0.8)); }
+    @keyframes syncPulse { 0%,100% { box-shadow: 0 2px 12px rgba(0,0,0,0.3); } 50% { box-shadow: 0 2px 20px rgba(255,200,50,0.4); } }
+    @keyframes spin { from{transform:rotate(0deg);} to{transform:rotate(360deg);} }
+    .sync-config-modal { position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:100000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(5px); }
+    .sync-config-panel { background:linear-gradient(135deg,#1a2a4a,#0d1a2d);border:1px solid rgba(100,150,255,0.3);border-radius:12px;padding:24px;min-width:360px;max-width:90vw;color:#e0e8f0;font-family:var(--font-main,sans-serif);box-shadow:0 8px 40px rgba(0,0,0,0.5); }
+    .sync-config-title { font-size:18px;font-weight:600;margin-bottom:16px;display:flex;align-items:center;gap:8px; }
+    .sync-config-field { margin-bottom:14px; }
+    .sync-config-label { display:block;font-size:12px;color:#8aa;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px; }
+    .sync-config-input { width:100%;padding:10px 12px;background:rgba(0,0,0,0.3);border:1px solid rgba(100,150,255,0.3);border-radius:6px;color:#fff;font-size:14px;outline:none;transition:border 0.2s;box-sizing:border-box; }
+    .sync-config-input:focus { border-color: rgba(100,180,255,0.8); }
+    .sync-config-hint { font-size:11px;color:#688;margin-top:4px; }
+    .sync-config-actions { display:flex;gap:10px;margin-top:20px;justify-content:flex-end; }
+    .sync-config-btn { padding:8px 18px;border-radius:6px;border:none;cursor:pointer;font-size:13px;font-weight:600;transition:all 0.2s; }
+    .sync-config-btn.primary { background:linear-gradient(135deg,#4080ff,#3060dd);color:#fff; }
+    .sync-config-btn.primary:hover { background:linear-gradient(135deg,#5090ff,#4070ee); }
+    .sync-config-btn.secondary { background:rgba(255,255,255,0.1);color:#aac; }
+    .sync-config-btn.secondary:hover { background:rgba(255,255,255,0.15); }
+    .sync-status { font-size:11px;color:#688;text-align:center;margin-top:10px; }
+    #sync-toast { position:fixed;top:20px;left:50%;transform:translateX(-50%);padding:12px 20px;border-radius:8px;font-size:14px;z-index:100001;transition:all 0.3s;opacity:0;pointer-events:none;backdrop-filter:blur(10px);font-family:var(--font-main,sans-serif);white-space:nowrap; }
+  </style>
   <!-- Three.js CDN (带加载检测和备用) -->
   <script>
     window.__threeLoaded = false;
@@ -119,6 +142,9 @@
   <!-- 地图悬停浮窗 -->
   <div id="map-tooltip"></div>
 
+  <!-- 云端同步按钮 -->
+  <button id="sync-cloud-btn" title="云同步 (Shift+点击配置)" style="position:fixed;bottom:100px;left:20px;width:44px;height:44px;border-radius:50%;border:2px solid rgba(100,150,255,0.5);cursor:pointer;z-index:99999;font-size:20px;display:flex;align-items:center;justify-content:center;background:rgba(20,40,80,0.9);color:#fff;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);box-shadow:0 4px 20px rgba(0,100,255,0.3);transition:all 0.3s;outline:none;padding:0;margin:0;">☁️</button>
+
   <!-- JS 脚本（按依赖顺序加载） -->
   <script src="js/data.js"></script>
   <script>
@@ -135,6 +161,7 @@
   <script src="js/explorer.js"></script>
   <script src="js/gear.js"></script>
   <script src="js/route.js"></script>
+  <script src="js/sync.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
