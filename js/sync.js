@@ -114,10 +114,16 @@ var SyncModule = (function() {
     else { btn.classList.remove('has-changes'); btn.title = '云同步 (Shift+点击配置)'; }
   }
 
+  function getWorkerUrl() {
+    var url = config.workerUrl || '';
+    if (url && url.indexOf('http') !== 0) url = 'https://' + url;
+    return url.replace(/\/$/, '');
+  }
+
   async function pull(showMsg) {
     if (!config.workerUrl) return { success: false, error: '未配置' };
     try {
-      var url = config.workerUrl.replace(/\/$/, '') + '/api/sync';
+      var url = getWorkerUrl() + '/api/sync';
       var resp = await fetch(url);
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       var res = await resp.json();
@@ -140,7 +146,7 @@ var SyncModule = (function() {
     if (!config.workerUrl) return { success: false, error: '未配置' };
     var data = collectAll();
     try {
-      var url = config.workerUrl.replace(/\/$/, '') + '/api/sync';
+      var url = getWorkerUrl() + '/api/sync';
       var h = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
       if (config.syncKey) h['X-Sync-Key'] = config.syncKey;
       var resp = await fetch(url, {

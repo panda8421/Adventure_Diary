@@ -1,43 +1,50 @@
-addEventListener('fetch', function(event) {
-  event.respondWith(handleRequest(event.request));
-});
+export default {
+  async fetch(request, env, ctx) {
+    var GITHUB_TOKEN = env.GITHUB_TOKEN || '';
+    var GITHUB_OWNER = env.GITHUB_OWNER || 'panda8421';
+    var GITHUB_REPO = env.GITHUB_REPO || 'Adventure_Diary';
+    var DATA_PATH = env.DATA_PATH || 'data/user-data.json';
+    var SYNC_KEY = env.SYNC_KEY || '';
+    var ALLOWED_ORIGINS = (env.ALLOWED_ORIGINS || 'http://localhost:8080,https://panda8421.github.io').split(',');
 
-async function handleRequest(request) {
-  var GITHUB_TOKEN = typeof GITHUB_TOKEN !== 'undefined' ? GITHUB_TOKEN : '';
-  var GITHUB_OWNER = typeof GITHUB_OWNER !== 'undefined' ? GITHUB_OWNER : 'panda8421';
-  var GITHUB_REPO = typeof GITHUB_REPO !== 'undefined' ? GITHUB_REPO : 'Adventure_Diary';
-  var DATA_PATH = typeof DATA_PATH !== 'undefined' ? DATA_PATH : 'data/user-data.json';
-  var SYNC_KEY = typeof SYNC_KEY !== 'undefined' ? SYNC_KEY : '';
-  var ALLOWED_ORIGINS = (typeof ALLOWED_ORIGINS !== 'undefined' ? ALLOWED_ORIGINS : 'http://localhost:8080,https://panda8421.github.io').split(',');
+    var origin = request.headers.get('Origin') || '';
+    var allowOrigin = '*';
+    if (origin && ALLOWED_ORIGINS.length > 0) {
+      for (var i = 0; i < ALLOWED_ORIGINS.length; i++) {
+        if (ALLOWED_ORIGINS[i] && origin.indexOf(ALLOWED_ORIGINS[i].replace(/^https?:\/\//, '')) >= 0) {
+          allowOrigin = origin;
+          break;
+        }
+      }
+    }
+    if (!origin) allowOrigin = '*';
 
-  var origin = request.headers.get('Origin') || '';
-  var allowOrigin = ALLOWED_ORIGINS.indexOf(origin) >= 0 ? origin : ALLOWED_ORIGINS[0];
+    var corsHeaders = {
+      'Access-Control-Allow-Origin': allowOrigin,
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, X-Sync-Key',
+    };
 
-  var corsHeaders = {
-    'Access-Control-Allow-Origin': allowOrigin,
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, X-Sync-Key',
-  };
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { headers: corsHeaders });
+    }
 
-  if (request.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
+    var url = new URL(request.url);
+
+    if (url.pathname === '/api/sync' && request.method === 'GET') {
+      return handleGet(GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO, DATA_PATH, corsHeaders);
+    }
+
+    if (url.pathname === '/api/sync' && request.method === 'POST') {
+      return handlePost(request, GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO, DATA_PATH, SYNC_KEY, corsHeaders);
+    }
+
+    return new Response(JSON.stringify({ error: 'Not found' }), {
+      status: 404,
+      headers: Object.assign({}, corsHeaders, { 'Content-Type': 'application/json' })
+    });
   }
-
-  var url = new URL(request.url);
-
-  if (url.pathname === '/api/sync' && request.method === 'GET') {
-    return handleGet(GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO, DATA_PATH, corsHeaders);
-  }
-
-  if (url.pathname === '/api/sync' && request.method === 'POST') {
-    return handlePost(request, GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO, DATA_PATH, SYNC_KEY, corsHeaders);
-  }
-
-  return new Response(JSON.stringify({ error: 'Not found' }), {
-    status: 404,
-    headers: Object.assign({}, corsHeaders, { 'Content-Type': 'application/json' })
-  });
-}
+};
 
 async function handleGet(token, owner, repo, path, corsHeaders) {
   try {
