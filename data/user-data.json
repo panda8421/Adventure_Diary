@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "timestamp": 1783499989162,
+  "routeStats": {},
+  "routeRatings": {},
+  "terrainMods": {
+    "wutaishan": {
+      "activeTrailId": "default",
+      "trailNameOverrides": {
+        "default": "gsdgdsgsgs"
+      }
+    }
+  }
+}
