@@ -61,6 +61,8 @@ const routes = [
     terrain: {
       style: 'alpine_meadow',
       baseHeight: 2000,
+      useRealisticTerrain: true,
+      ridgeConnections: [[0,1],[1,2],[2,3],[2,4],[3,4]],
       peaks: [
         { name: '东台望海峰', height: 2795, x: 0.75, y: 0.2 },
         { name: '北台叶斗峰', height: 3061, x: 0.5, y: 0.1 },

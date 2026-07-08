@@ -48,7 +48,7 @@ var SyncModule = (function() {
   }
 
   function collectAll() {
-    var d = { version: 1, timestamp: Date.now(), routeStats: {}, routeRatings: {}, terrainMods: {} };
+    var d = { version: 1, timestamp: Date.now(), routeStats: {}, routeRatings: {}, terrainMods: {}, pois: {} };
     try { var s = localStorage.getItem('adventure_diary_route_stats'); if (s) d.routeStats = JSON.parse(s) || {}; } catch(e) {}
     try { var r = localStorage.getItem('adventure_diary_route_ratings'); if (r) d.routeRatings = JSON.parse(r) || {}; } catch(e) {}
     var prefix = 'taillog_terrain_mod_';
@@ -61,6 +61,7 @@ var SyncModule = (function() {
         }
       }
     } catch(e) {}
+    try { var p = localStorage.getItem('taillog_poi_markers'); if (p) d.pois = JSON.parse(p) || {}; } catch(e) {}
     return d;
   }
 
@@ -90,6 +91,26 @@ var SyncModule = (function() {
           }
         } catch(e) {}
       }
+    }
+    if (cloud.pois) {
+      try {
+        var lp = {}; try { lp = JSON.parse(localStorage.getItem('taillog_poi_markers')) || {}; } catch(e) {}
+        var merged = {};
+        for (var rid2 in cloud.pois) {
+          if (!cloud.pois.hasOwnProperty(rid2)) continue;
+          merged[rid2] = cloud.pois[rid2] || [];
+        }
+        for (var rid3 in lp) {
+          if (!lp.hasOwnProperty(rid3)) continue;
+          if (!merged[rid3]) merged[rid3] = [];
+          var cloudIds = {};
+          for (var ci = 0; ci < (cloud.pois[rid3] || []).length; ci++) { cloudIds[(cloud.pois[rid3] || [])[ci].id] = true; }
+          for (var li = 0; li < lp[rid3].length; li++) {
+            if (!cloudIds[lp[rid3][li].id]) merged[rid3].push(lp[rid3][li]);
+          }
+        }
+        localStorage.setItem('taillog_poi_markers', JSON.stringify(merged));
+      } catch(e) {}
     }
   }
 
@@ -130,6 +151,8 @@ var SyncModule = (function() {
       if (res.success && res.data) {
         applyCloud(res.data);
         try { localStorage.setItem(LAST_SYNC_TIME_KEY, Date.now().toString()); } catch(e) {}
+        if (typeof ThreeMap !== 'undefined' && ThreeMap.refreshPOIs) ThreeMap.refreshPOIs();
+        if (typeof RouteModule !== 'undefined' && RouteModule.refreshTrailSelector) RouteModule.refreshTrailSelector();
         if (showMsg) toast('☁️ 已从云端同步最新数据');
         return { success: true };
       } else if (res.success && !res.data) {
