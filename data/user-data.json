@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "timestamp": 1783499989162,
+  "timestamp": 1783500010288,
   "routeStats": {},
   "routeRatings": {},
   "terrainMods": {
@@ -8,7 +8,8 @@
       "activeTrailId": "default",
       "trailNameOverrides": {
         "default": "gsdgdsgsgs"
-      }
+      },
+      "lastSync": 1783499989162
     }
   }
 }
