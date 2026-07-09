@@ -43,14 +43,17 @@ const routes = [
   {
     id: 'wutaishan',
     name: '五台山',
-    lat: 39.0100,
-    lng: 113.5900,
+    lat: 39.0600,
+    lng: 113.5800,
     difficulty: 3,
     difficultyLabel: '进阶级',
     date: '2024-07-20',
     distance: 52,
     elevation: 2800,
     maxAltitude: 3061,
+    center: { lng: 113.580, lat: 39.060 },
+    viewRadiusKm: 7,
+    useDEM: true,
     description: '五台山大朝台，是中国最经典的徒步路线之一。从鸿门岩出发，依次穿越东台、北台、中台、西台、南台五座台顶，全程约52公里。\n\n北台叶斗峰海拔3061米，是华北屋脊。徒步过程中可欣赏高山草甸、云海日出、古刹梵音。七月的五台山，草甸上开满金莲花，景色壮美。\n\n这条路线对体能要求较高，需连续徒步2-3天。台顶之间温差大，即使是夏季也需携带冲锋衣和保暖层。台顶寺庙可提供简单的食宿，但条件简陋。',
     images: [
       'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=Wutai+Mountain+alpine+meadow+golden+lotus+flowers+mountain+peak+clouds+serene&image_size=landscape_16_9',
@@ -60,26 +63,27 @@ const routes = [
     gearIds: ['backpack-osprey', 'boots-salomon', 'poles-blackdiamond', 'headlamp-petzl', 'bottle-nalgene', 'jacket-arc'],
     terrain: {
       style: 'alpine_meadow',
+      verticalScale: 1.5,
       baseHeight: 2000,
-      useRealisticTerrain: true,
+      useRealisticTerrain: false,
       ridgeConnections: [[0,1],[1,2],[2,3],[2,4],[3,4]],
       peaks: [
-        { name: '东台望海峰', height: 2795, x: 0.75, y: 0.2 },
-        { name: '北台叶斗峰', height: 3061, x: 0.5, y: 0.1 },
-        { name: '中台翠岩峰', height: 2894, x: 0.35, y: 0.25 },
-        { name: '西台挂月峰', height: 2773, x: 0.15, y: 0.35 },
-        { name: '南台锦绣峰', height: 2485, x: 0.4, y: 0.75 }
+        { name: '东台望海峰', height: 2795, lng: 113.624, lat: 39.065 },
+        { name: '北台叶斗峰', height: 3061, lng: 113.563, lat: 39.088 },
+        { name: '中台翠岩峰', height: 2894, lng: 113.558, lat: 39.067 },
+        { name: '西台挂月峰', height: 2773, lng: 113.533, lat: 39.068 },
+        { name: '南台锦绣峰', height: 2485, lng: 113.600, lat: 39.028 }
       ],
       trailPoints: [
-        { x: 0.7, y: 0.25, name: '鸿门岩' },
-        { x: 0.75, y: 0.2, name: '东台' },
-        { x: 0.6, y: 0.12, name: '华北屋脊' },
-        { x: 0.5, y: 0.1, name: '北台' },
-        { x: 0.35, y: 0.25, name: '中台' },
-        { x: 0.15, y: 0.35, name: '西台' },
-        { x: 0.25, y: 0.55, name: '吉祥寺' },
-        { x: 0.4, y: 0.75, name: '南台' },
-        { x: 0.5, y: 0.85, name: '佛母洞' }
+        { lng: 113.614, lat: 39.062, name: '鸿门岩' },
+        { lng: 113.624, lat: 39.065, name: '东台' },
+        { lng: 113.579, lat: 39.080, name: '华北屋脊' },
+        { lng: 113.563, lat: 39.088, name: '北台' },
+        { lng: 113.558, lat: 39.067, name: '中台' },
+        { lng: 113.533, lat: 39.068, name: '西台' },
+        { lng: 113.535, lat: 39.045, name: '吉祥寺' },
+        { lng: 113.600, lat: 39.028, name: '南台' },
+        { lng: 113.607, lat: 39.015, name: '佛母洞' }
       ],
       trails: [
         {
@@ -87,15 +91,15 @@ const routes = [
           name: '三天两夜顺朝（鸿门岩→南台）',
           direction: 1,
           points: [
-            { x: 0.7, y: 0.25, name: '鸿门岩' },
-            { x: 0.75, y: 0.2, name: '东台' },
-            { x: 0.6, y: 0.12, name: '华北屋脊' },
-            { x: 0.5, y: 0.1, name: '北台' },
-            { x: 0.35, y: 0.25, name: '中台' },
-            { x: 0.15, y: 0.35, name: '西台' },
-            { x: 0.25, y: 0.55, name: '吉祥寺' },
-            { x: 0.4, y: 0.75, name: '南台' },
-            { x: 0.5, y: 0.85, name: '佛母洞' }
+            { lng: 113.614, lat: 39.062, name: '鸿门岩' },
+            { lng: 113.624, lat: 39.065, name: '东台' },
+            { lng: 113.579, lat: 39.080, name: '华北屋脊' },
+            { lng: 113.563, lat: 39.088, name: '北台' },
+            { lng: 113.558, lat: 39.067, name: '中台' },
+            { lng: 113.533, lat: 39.068, name: '西台' },
+            { lng: 113.535, lat: 39.045, name: '吉祥寺' },
+            { lng: 113.600, lat: 39.028, name: '南台' },
+            { lng: 113.607, lat: 39.015, name: '佛母洞' }
           ]
         },
         {
@@ -103,15 +107,15 @@ const routes = [
           name: '三天两夜逆朝（佛母洞→鸿门岩）',
           direction: 1,
           points: [
-            { x: 0.5, y: 0.85, name: '佛母洞' },
-            { x: 0.4, y: 0.75, name: '南台' },
-            { x: 0.25, y: 0.55, name: '吉祥寺' },
-            { x: 0.15, y: 0.35, name: '西台' },
-            { x: 0.35, y: 0.25, name: '中台' },
-            { x: 0.5, y: 0.1, name: '北台' },
-            { x: 0.6, y: 0.12, name: '华北屋脊' },
-            { x: 0.75, y: 0.2, name: '东台' },
-            { x: 0.7, y: 0.25, name: '鸿门岩' }
+            { lng: 113.607, lat: 39.015, name: '佛母洞' },
+            { lng: 113.600, lat: 39.028, name: '南台' },
+            { lng: 113.535, lat: 39.045, name: '吉祥寺' },
+            { lng: 113.533, lat: 39.068, name: '西台' },
+            { lng: 113.558, lat: 39.067, name: '中台' },
+            { lng: 113.563, lat: 39.088, name: '北台' },
+            { lng: 113.579, lat: 39.080, name: '华北屋脊' },
+            { lng: 113.624, lat: 39.065, name: '东台' },
+            { lng: 113.614, lat: 39.062, name: '鸿门岩' }
           ]
         },
         {
@@ -119,10 +123,10 @@ const routes = [
           name: '小朝台（黛螺顶→台怀镇）',
           direction: 1,
           points: [
-            { x: 0.55, y: 0.42, name: '台怀镇' },
-            { x: 0.58, y: 0.38, name: '显通寺' },
-            { x: 0.6, y: 0.35, name: '塔院寺' },
-            { x: 0.65, y: 0.32, name: '黛螺顶' }
+            { lng: 113.585, lat: 39.005, name: '台怀镇' },
+            { lng: 113.590, lat: 39.010, name: '显通寺' },
+            { lng: 113.593, lat: 39.012, name: '塔院寺' },
+            { lng: 113.597, lat: 39.018, name: '黛螺顶' }
           ]
         },
         {
@@ -130,18 +134,18 @@ const routes = [
           name: '大朝台顺时针（五台连穿）',
           direction: 1,
           points: [
-            { x: 0.7, y: 0.25, name: '鸿门岩' },
-            { x: 0.75, y: 0.2, name: '东台' },
-            { x: 0.6, y: 0.12, name: '华北屋脊' },
-            { x: 0.5, y: 0.1, name: '北台' },
-            { x: 0.35, y: 0.25, name: '中台' },
-            { x: 0.15, y: 0.35, name: '西台' },
-            { x: 0.2, y: 0.45, name: '八功德水' },
-            { x: 0.3, y: 0.6, name: '金阁寺' },
-            { x: 0.4, y: 0.7, name: '气象站' },
-            { x: 0.4, y: 0.75, name: '南台' },
-            { x: 0.5, y: 0.85, name: '佛母洞' },
-            { x: 0.55, y: 0.55, name: '台怀镇' }
+            { lng: 113.614, lat: 39.062, name: '鸿门岩' },
+            { lng: 113.624, lat: 39.065, name: '东台' },
+            { lng: 113.579, lat: 39.080, name: '华北屋脊' },
+            { lng: 113.563, lat: 39.088, name: '北台' },
+            { lng: 113.558, lat: 39.067, name: '中台' },
+            { lng: 113.533, lat: 39.068, name: '西台' },
+            { lng: 113.530, lat: 39.055, name: '八功德水' },
+            { lng: 113.550, lat: 39.040, name: '金阁寺' },
+            { lng: 113.580, lat: 39.035, name: '气象站' },
+            { lng: 113.600, lat: 39.028, name: '南台' },
+            { lng: 113.607, lat: 39.015, name: '佛母洞' },
+            { lng: 113.585, lat: 39.005, name: '台怀镇' }
           ]
         },
         {
@@ -149,17 +153,17 @@ const routes = [
           name: '一日速穿顺朝（鸿门岩→佛母洞）',
           direction: 1,
           points: [
-            { x: 0.7, y: 0.25, name: '鸿门岩' },
-            { x: 0.6, y: 0.15, name: '北台' },
-            { x: 0.35, y: 0.25, name: '中台' },
-            { x: 0.15, y: 0.35, name: '西台' },
-            { x: 0.4, y: 0.75, name: '南台' },
-            { x: 0.5, y: 0.85, name: '佛母洞' }
+            { lng: 113.614, lat: 39.062, name: '鸿门岩' },
+            { lng: 113.563, lat: 39.088, name: '北台' },
+            { lng: 113.558, lat: 39.067, name: '中台' },
+            { lng: 113.533, lat: 39.068, name: '西台' },
+            { lng: 113.600, lat: 39.028, name: '南台' },
+            { lng: 113.607, lat: 39.015, name: '佛母洞' }
           ]
         }
       ],
       temples: [
-        { x: 0.5, y: 0.5, name: '台怀镇' }
+        { lng: 113.585, lat: 39.005, name: '台怀镇' }
       ]
     }
   },

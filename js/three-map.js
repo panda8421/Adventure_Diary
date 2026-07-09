@@ -2417,6 +2417,485 @@ var ThreeMap = (function() {
 
   // ========== END POI系统 ==========
 
+  // ========== DEM真实地形系统 ==========
+
+  var currentDEMData = null;
+  var demLoadingEl = null;
+
+  function showDEMLoading() {
+    hideDEMLoading();
+    var el = document.createElement('div');
+    el.id = 'dem-loading';
+    el.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:2000;padding:20px 30px;background:rgba(15,25,50,0.95);border:1px solid rgba(100,160,220,0.4);border-radius:12px;color:#c8d8f0;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;font-size:14px;text-align:center;backdrop-filter:blur(12px);box-shadow:0 8px 40px rgba(0,100,255,0.3);';
+    el.innerHTML = '<div style="margin-bottom:10px;font-size:16px;color:#88ccff;">🏔️ 加载真实地形数据</div><div id="dem-progress-text" style="font-size:12px;color:#9ab;">准备中...</div>';
+    document.body.appendChild(el);
+    demLoadingEl = el;
+  }
+
+  function updateDEMLoading(loaded, total) {
+    if (!demLoadingEl) return;
+    var pct = total > 0 ? Math.round(loaded / total * 100) : 0;
+    var txt = demLoadingEl.querySelector('#dem-progress-text');
+    if (txt) txt.textContent = '已加载 ' + loaded + '/' + total + ' 个瓦片 (' + pct + '%)';
+  }
+
+  function hideDEMLoading() {
+    if (demLoadingEl) {
+      demLoadingEl.remove();
+      demLoadingEl = null;
+    }
+  }
+
+  function lngLatToNormalizedXY(lng, lat, dem) {
+    var p = dem.project(lng, lat);
+    var size = dem.mountainSize;
+    return { x: (p.x + size / 2) / size, y: (p.z + size / 2) / size };
+  }
+
+  function createDEMTerrainMesh(dem, route) {
+    var size = dem.mountainSize;
+    var gridSize = dem.gridSize;
+    var segments = gridSize - 1;
+    var verticalScale = dem.verticalScale;
+    var worldScale = (dem.radiusKm * 2000) / size;
+
+    var geometry = new THREE.PlaneGeometry(size, size, segments, segments);
+    geometry.rotateX(-Math.PI / 2);
+    var positions = geometry.attributes.position;
+    var heightValues = new Float32Array(positions.count);
+
+    var minScaledH = Infinity;
+    var maxScaledH = -Infinity;
+
+    for (var i = 0; i < positions.count; i++) {
+      var col = i % (segments + 1);
+      var row = Math.floor(i / (segments + 1));
+      var h = dem.heights[row * gridSize + col];
+      var relH = (h - dem.centerHeight) / worldScale * verticalScale;
+      heightValues[i] = relH;
+      positions.setY(i, relH);
+      if (relH < minScaledH) minScaledH = relH;
+      if (relH > maxScaledH) maxScaledH = relH;
+    }
+    geometry.computeVertexNormals();
+
+    var shaderMat = createTerrainShaderMaterial();
+    shaderMat.uniforms.uMinHeight.value = minScaledH;
+    shaderMat.uniforms.uMaxHeight.value = maxScaledH;
+    shaderMat.uniforms.uLightDir.value.set(-0.4, 0.85, 0.35).normalize();
+
+    var mesh = new THREE.Mesh(geometry, shaderMat);
+    mesh.receiveShadow = true;
+    mesh.castShadow = true;
+    mesh.userData.isTerrain = true;
+    mesh.userData.routeId = route.id;
+    mesh.userData.segments = segments;
+    mesh.userData.size = size;
+    mesh.userData.isRealistic = true;
+    mesh.userData.isDEM = true;
+    mesh.userData.heightValues = heightValues;
+    mesh.userData.demData = dem;
+    mesh.userData.heightScale = 1;
+    mesh.userData.baseHeight = dem.minHeight;
+    mesh.userData.maxHeight = dem.maxHeight;
+
+    return {
+      mesh: mesh,
+      size: size,
+      segments: segments,
+      heightScale: 1,
+      minScaledH: minScaledH,
+      maxScaledH: maxScaledH,
+      dem: dem,
+      worldScale: worldScale,
+      verticalScale: verticalScale
+    };
+  }
+
+  function createDEMMountainGroup(dem, route) {
+    var group = new THREE.Group();
+    group.name = 'mountain_terrain_dem';
+
+    var result = createDEMTerrainMesh(dem, route);
+    var tMesh = result.mesh;
+    var size = result.size;
+    terrainMesh = tMesh;
+    group.add(tMesh);
+
+    var terrain = route.terrain;
+    var groundOffset = 0.4;
+
+    var peakConeGeo = new THREE.ConeGeometry(0.6, 2.0, 8);
+    var peakConeMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      emissive: 0x4488ff,
+      emissiveIntensity: 0.4,
+      roughness: 0.3
+    });
+
+    for (var pi = 0; pi < terrain.peaks.length; pi++) {
+      var peak = terrain.peaks[pi];
+      var pn = lngLatToNormalizedXY(peak.lng, peak.lat, dem);
+      var peakX = (pn.x - 0.5) * size;
+      var peakZ = (pn.y - 0.5) * size;
+      var peakRealH = dem.getHeight(peak.lng, peak.lat);
+      var peakY = (peakRealH - dem.centerHeight) / result.worldScale * result.verticalScale;
+
+      var peakMesh = new THREE.Mesh(peakConeGeo, peakConeMat);
+      peakMesh.position.set(peakX, peakY + 1.1, peakZ);
+      peakMesh.userData.isPeak = true;
+      peakMesh.userData.peakName = peak.name;
+      peakMesh.userData.peakHeight = peak.height;
+      group.add(peakMesh);
+
+      var lc = document.createElement('canvas');
+      var lctx = lc.getContext('2d');
+      lc.width = 256;
+      lc.height = 64;
+      lctx.font = 'bold 22px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif';
+      lctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+      lctx.textAlign = 'center';
+      lctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
+      lctx.shadowBlur = 6;
+      lctx.fillText(peak.name, 128, 26);
+      lctx.font = '16px -apple-system, "PingFang SC", sans-serif';
+      lctx.fillStyle = 'rgba(150, 200, 255, 0.9)';
+      var realH = Math.round(peakRealH);
+      lctx.fillText(realH + 'm', 128, 50);
+      var lt = new THREE.CanvasTexture(lc);
+      var lm = new THREE.SpriteMaterial({ map: lt, transparent: true, depthTest: false, depthWrite: false });
+      var ls = new THREE.Sprite(lm);
+      ls.position.set(peakX, peakY + 4.5, peakZ);
+      ls.scale.set(6, 1.5, 1);
+      group.add(ls);
+    }
+
+    if (terrain.trailPoints && terrain.trailPoints.length > 1) {
+      var sampleCount = Math.max(120, terrain.trailPoints.length * 25);
+      var trailPoints3D = [];
+      for (var si = 0; si <= sampleCount; si++) {
+        var tt = si / sampleCount;
+        var segIdx = Math.min(Math.floor(tt * (terrain.trailPoints.length - 1)), terrain.trailPoints.length - 2);
+        var segT = (tt * (terrain.trailPoints.length - 1)) - segIdx;
+        var tpA = terrain.trailPoints[segIdx];
+        var tpB = terrain.trailPoints[segIdx + 1];
+        var lng = tpA.lng + (tpB.lng - tpA.lng) * segT;
+        var lat = tpA.lat + (tpB.lat - tpA.lat) * segT;
+        var sx = (lngLatToNormalizedXY(lng, lat, dem).x - 0.5) * size;
+        var sz = (lngLatToNormalizedXY(lng, lat, dem).y - 0.5) * size;
+        var h = dem.getHeight(lng, lat);
+        var sy = (h - dem.centerHeight) / result.worldScale * result.verticalScale + groundOffset;
+        trailPoints3D.push(new THREE.Vector3(sx, sy, sz));
+      }
+      var trailCurve = new THREE.CatmullRomCurve3(trailPoints3D, false, 'catmullrom', 0.0);
+      var tubeGeo = new THREE.TubeGeometry(trailCurve, 300, 0.12, 6, false);
+      var tubeMat = new THREE.MeshBasicMaterial({
+        color: 0xffcc44,
+        transparent: true,
+        opacity: 0.95,
+        depthWrite: false
+      });
+      var tubeMesh = new THREE.Mesh(tubeGeo, tubeMat);
+      tubeMesh.renderOrder = 999;
+      tubeMesh.userData.isTrail = true;
+      group.add(tubeMesh);
+      var glowGeo = new THREE.TubeGeometry(trailCurve, 300, 0.32, 6, false);
+      var glowMat = new THREE.MeshBasicMaterial({
+        color: 0xffdd66,
+        transparent: true,
+        opacity: 0.18,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      });
+      var glowMesh = new THREE.Mesh(glowGeo, glowMat);
+      glowMesh.renderOrder = 998;
+      glowMesh.userData.isTrail = true;
+      group.add(glowMesh);
+
+      var dotGeo = new THREE.SphereGeometry(0.18, 12, 12);
+      var dotMat = new THREE.MeshStandardMaterial({
+        color: 0xffcc44,
+        emissive: 0xffaa00,
+        emissiveIntensity: 1.0,
+        roughness: 0.2
+      });
+      for (var ti2 = 0; ti2 < terrain.trailPoints.length; ti2++) {
+        var tp2 = terrain.trailPoints[ti2];
+        var np2 = lngLatToNormalizedXY(tp2.lng, tp2.lat, dem);
+        var tpx = (np2.x - 0.5) * size;
+        var tpz = (np2.y - 0.5) * size;
+        var tph = dem.getHeight(tp2.lng, tp2.lat);
+        var tpy = (tph - dem.centerHeight) / result.worldScale * result.verticalScale + groundOffset + 0.2;
+        var dotMesh = new THREE.Mesh(dotGeo, dotMat);
+        dotMesh.position.set(tpx, tpy, tpz);
+        dotMesh.userData.isTrailDot = true;
+        group.add(dotMesh);
+        if (tp2.name) {
+          var tplc = document.createElement('canvas');
+          var tplctx = tplc.getContext('2d');
+          tplc.width = 200;
+          tplc.height = 48;
+          tplctx.font = 'bold 17px -apple-system, "PingFang SC", sans-serif';
+          tplctx.fillStyle = 'rgba(255, 220, 150, 0.95)';
+          tplctx.textAlign = 'center';
+          tplctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+          tplctx.shadowBlur = 4;
+          tplctx.fillText(tp2.name, 100, 28);
+          var tplt = new THREE.CanvasTexture(tplc);
+          var tplm = new THREE.SpriteMaterial({ map: tplt, transparent: true, depthTest: false, depthWrite: false });
+          var tpls = new THREE.Sprite(tplm);
+          tpls.position.set(tpx, tpy + 2, tpz);
+          tpls.scale.set(4, 1, 1);
+          tpls.userData.isTrailLabel = true;
+          group.add(tpls);
+        }
+      }
+    }
+
+    if (terrain.camps) {
+      var tentGeo = new THREE.ConeGeometry(0.7, 1.1, 4);
+      var tentMat = new THREE.MeshStandardMaterial({
+        color: 0x66ff88,
+        emissive: 0x228833,
+        emissiveIntensity: 0.4,
+        roughness: 0.6
+      });
+      for (var ci = 0; ci < terrain.camps.length; ci++) {
+        var camp = terrain.camps[ci];
+        var cn = lngLatToNormalizedXY(camp.lng, camp.lat, dem);
+        var cx = (cn.x - 0.5) * size;
+        var cz = (cn.y - 0.5) * size;
+        var ch = dem.getHeight(camp.lng, camp.lat);
+        var cy = (ch - dem.centerHeight) / result.worldScale * result.verticalScale + 0.3;
+        var tentMesh = new THREE.Mesh(tentGeo, tentMat);
+        tentMesh.position.set(cx, cy + 0.55, cz);
+        tentMesh.rotation.y = Math.PI / 4;
+        tentMesh.userData.isCamp = true;
+        group.add(tentMesh);
+        if (camp.name) {
+          var clc = document.createElement('canvas');
+          var clctx = clc.getContext('2d');
+          clc.width = 180;
+          clc.height = 40;
+          clctx.font = 'bold 15px -apple-system, "PingFang SC", sans-serif';
+          clctx.fillStyle = 'rgba(120, 255, 150, 0.95)';
+          clctx.textAlign = 'center';
+          clctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+          clctx.shadowBlur = 4;
+          clctx.fillText(camp.name, 90, 25);
+          var clt = new THREE.CanvasTexture(clc);
+          var clm = new THREE.SpriteMaterial({ map: clt, transparent: true, depthTest: false, depthWrite: false });
+          var cls = new THREE.Sprite(clm);
+          cls.position.set(cx, cy + 2.2, cz);
+          cls.scale.set(3.5, 0.8, 1);
+          cls.userData.isCampLabel = true;
+          group.add(cls);
+        }
+      }
+    }
+
+    if (terrain.temples) {
+      for (var tei = 0; tei < terrain.temples.length; tei++) {
+        var temple = terrain.temples[tei];
+        var tnp = lngLatToNormalizedXY(temple.lng, temple.lat, dem);
+        var tex = (tnp.x - 0.5) * size;
+        var tez = (tnp.y - 0.5) * size;
+        var teh = dem.getHeight(temple.lng, temple.lat);
+        var tey = (teh - dem.centerHeight) / result.worldScale * result.verticalScale + 0.3;
+        var templeGeo = new THREE.ConeGeometry(0.5, 1.5, 6);
+        var templeMat = new THREE.MeshStandardMaterial({
+          color: 0xffaa55,
+          emissive: 0x994400,
+          emissiveIntensity: 0.3,
+          roughness: 0.5
+        });
+        var templeMesh = new THREE.Mesh(templeGeo, templeMat);
+        templeMesh.position.set(tex, tey + 0.75, tez);
+        group.add(templeMesh);
+        if (temple.name) {
+          var telc = document.createElement('canvas');
+          var telctx = telc.getContext('2d');
+          telc.width = 180;
+          telc.height = 40;
+          telctx.font = 'bold 14px -apple-system, "PingFang SC", sans-serif';
+          telctx.fillStyle = 'rgba(255, 200, 120, 0.95)';
+          telctx.textAlign = 'center';
+          telctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+          telctx.shadowBlur = 4;
+          telctx.fillText(temple.name, 90, 25);
+          var telt = new THREE.CanvasTexture(telc);
+          var telm = new THREE.SpriteMaterial({ map: telt, transparent: true, depthTest: false, depthWrite: false });
+          var tels = new THREE.Sprite(telm);
+          tels.position.set(tex, tey + 2.5, tez);
+          tels.scale.set(3.5, 0.8, 1);
+          group.add(tels);
+        }
+      }
+    }
+
+    tMesh.userData.terrainResult = result;
+    return { group: group, result: result };
+  }
+
+  async function enterMountainModeDEM(route) {
+    showDEMLoading();
+    try {
+      var dem = await (window.DEMLoader && window.DEMLoader.loadRouteTerrain
+        ? window.DEMLoader.loadRouteTerrain(route, {
+            onProgress: function(loaded, total) { updateDEMLoading(loaded, total); }
+          })
+        : Promise.reject(new Error('DEMLoader not available')));
+
+      currentDEMData = dem;
+      hideDEMLoading();
+
+      var mtResult = createDEMMountainGroup(dem, route);
+      mountainGroup = mtResult.group;
+      mountainGroup.visible = false;
+      scene.add(mountainGroup);
+
+      function demLngLatToXY(pt) {
+        if (pt.lng !== undefined && pt.lat !== undefined) {
+          var n = lngLatToNormalizedXY(pt.lng, pt.lat, dem);
+          pt.x = n.x;
+          pt.y = n.y;
+        }
+        return pt;
+      }
+      var t = route.terrain;
+      if (t.peaks) t.peaks.forEach(demLngLatToXY);
+      if (t.trailPoints) t.trailPoints.forEach(demLngLatToXY);
+      if (t.camps) t.camps.forEach(demLngLatToXY);
+      if (t.temples) t.temples.forEach(demLngLatToXY);
+      if (t.trails) t.trails.forEach(function(tr) { if (tr.points) tr.points.forEach(demLngLatToXY); });
+
+      var savedMod = loadAllTerrainMod(route.id);
+      trailDirectionOverrides = {};
+      trailCompletedStatus = {};
+      trailNameOverrides = {};
+      deletedDefaultTrailIds = {};
+      if (savedMod) {
+        if (savedMod.riverPoints && savedMod.riverPoints.length >= 2) {
+          workingRiverPoints = savedMod.riverPoints.map(function(p) {
+            if (p.lng !== undefined && p.lat !== undefined) {
+              var pn = lngLatToNormalizedXY(p.lng, p.lat, dem);
+              return { x: pn.x, y: pn.y };
+            }
+            return { x: p.x, y: p.y };
+          });
+        }
+        if (savedMod.riverWidth !== undefined) riverWidth = savedMod.riverWidth;
+        if (savedMod.riverDepth !== undefined) riverDepth = savedMod.riverDepth;
+        if (savedMod.customTrails) {
+          workingCustomTrails = savedMod.customTrails.map(function(tr) {
+            return { id: tr.id, name: tr.name, direction: tr.direction || 1, points: (tr.points || []).map(function(p) {
+              if (p.lng !== undefined && p.lat !== undefined) {
+                var pn = lngLatToNormalizedXY(p.lng, p.lat, dem);
+                return { x: pn.x, y: pn.y, name: p.name };
+              }
+              return { x: p.x, y: p.y, name: p.name };
+            }) };
+          });
+        }
+        if (savedMod.activeTrailId) activeTrailId = savedMod.activeTrailId;
+        if (savedMod.trailDirectionOverrides) trailDirectionOverrides = JSON.parse(JSON.stringify(savedMod.trailDirectionOverrides));
+        if (savedMod.trailCompletedStatus) trailCompletedStatus = JSON.parse(JSON.stringify(savedMod.trailCompletedStatus));
+        if (savedMod.trailNameOverrides) trailNameOverrides = JSON.parse(JSON.stringify(savedMod.trailNameOverrides));
+        if (savedMod.deletedDefaultTrailIds) deletedDefaultTrailIds = JSON.parse(JSON.stringify(savedMod.deletedDefaultTrailIds));
+      }
+      initActiveTrail();
+      if (workingRiverPoints && workingRiverPoints.length >= 2) {
+        rebuildRiverRender();
+      }
+      rebuildPOIMarkers();
+
+      mapGroup.visible = false;
+      markersGroup.visible = false;
+      atmosphereGroup.visible = false;
+
+      var isRealistic = true;
+      var terrainSize = 80;
+      var camDist = 85;
+      var camHeight = 65;
+      var lookAtY = 9;
+      var startPos = camera.position.clone();
+      var startTarget = controls.target.clone();
+
+      mountainGroup.position.set(0, 0, 0);
+      mountainGroup.visible = true;
+      mountainGroup.scale.set(0.01, 0.01, 0.01);
+
+      var finalCamPos = new THREE.Vector3(camDist, camHeight, camDist);
+      var finalLookAt = new THREE.Vector3(0, lookAtY, 0);
+
+      var animStartTime = Date.now();
+      var animDuration = 2200;
+      controls.enabled = false;
+
+      function animateDEMEnter() {
+        var elapsed = Date.now() - animStartTime;
+        var t = Math.min(elapsed / animDuration, 1);
+        var easeT = 1 - Math.pow(1 - t, 3);
+        camera.position.lerpVectors(startPos, finalCamPos, easeT);
+        controls.target.lerpVectors(startTarget, finalLookAt, easeT);
+        camera.lookAt(controls.target);
+        var scaleT = Math.min(t * 1.6, 1);
+        var scaleEase = 1 - Math.pow(1 - scaleT, 4);
+        var s = 0.01 + scaleEase * 0.99;
+        mountainGroup.scale.set(s, s, s);
+        if (t < 1) {
+          requestAnimationFrame(animateDEMEnter);
+        } else {
+          mountainGroup.scale.set(1, 1, 1);
+          camera.position.copy(finalCamPos);
+          controls.target.copy(finalLookAt);
+          camera.lookAt(controls.target);
+          controls.minDistance = 30;
+          controls.maxDistance = 220;
+          controls.minPolarAngle = Math.PI * 0.05;
+          controls.maxPolarAngle = Math.PI / 2 - 0.05;
+          controls.enableDamping = true;
+          controls.dampingFactor = 0.1;
+          controls.update();
+          controls.enabled = true;
+          isCameraAnimating = false;
+        }
+      }
+      animateDEMEnter();
+
+      if (editorPanel) {
+        var demNotice = editorPanel.querySelector('#dem-notice');
+        if (!demNotice) {
+          demNotice = document.createElement('div');
+          demNotice.id = 'dem-notice';
+          demNotice.style.cssText = 'margin-bottom:10px;padding:8px;background:rgba(60,120,180,0.2);border:1px solid rgba(80,150,220,0.3);border-radius:6px;color:#88bbdd;font-size:11px;line-height:1.5;';
+          demNotice.textContent = '🔒 DEM真实地形模式下，地形抬升/降低/平滑/河流工具已禁用，路径编辑仍然可用。';
+          var toolsDiv = editorPanel.querySelector('#terrain-tools');
+          if (toolsDiv && toolsDiv.parentNode) {
+            toolsDiv.parentNode.insertBefore(demNotice, toolsDiv);
+          }
+        }
+        var toolBtns = editorPanel.querySelectorAll('[data-tool="raise"], [data-tool="lower"], [data-tool="smooth"], [data-tool="river"]');
+        toolBtns.forEach(function(btn) {
+          btn.style.display = 'none';
+        });
+        var terrainTools = editorPanel.querySelector('#terrain-tools');
+        if (terrainTools) terrainTools.style.display = 'none';
+        var riverTools = editorPanel.querySelector('#river-tools');
+        if (riverTools) riverTools.style.display = 'none';
+      }
+
+      return;
+    } catch(err) {
+      console.warn('[DEM] Failed to load DEM terrain, falling back to procedural:', err);
+      hideDEMLoading();
+      currentDEMData = null;
+      throw err;
+    }
+  }
+
+  // ========== END DEM真实地形系统 ==========
+
   // 创建山峰地形
   function createMountainTerrain(route) {
     var terrain = route.terrain;
@@ -2687,7 +3166,7 @@ var ThreeMap = (function() {
   }
 
   // 进入山峰模式
-  function enterMountainMode(route) {
+  async function enterMountainMode(route) {
     if (!container || !route || !route.terrain) return;
     if (isCameraAnimating) return;
     if (viewMode === 'mountain' && currentMountainRoute && currentMountainRoute.id === route.id) return;
@@ -2715,6 +3194,9 @@ var ThreeMap = (function() {
     editEntryBtn.style.display = 'block';
     if (!addMarkerBtn) createAddMarkerButton();
     addMarkerBtn.style.display = 'block';
+
+    currentDEMData = null;
+    hideDEMLoading();
 
     if (mountainGroup) {
       scene.remove(mountainGroup);
@@ -2748,6 +3230,30 @@ var ThreeMap = (function() {
       });
       riverHandlesGroup = null;
     }
+
+    if (route.useDEM && window.DEMLoader) {
+      try {
+        return await enterMountainModeDEM(route);
+      } catch(e) {
+        console.warn('[ThreeMap] DEM mode failed, falling back to procedural terrain:', e);
+      }
+    }
+
+    if (editorPanel) {
+      var demNotice = editorPanel.querySelector('#dem-notice');
+      if (demNotice) demNotice.remove();
+      var resetBtns = editorPanel.querySelectorAll('[data-tool="raise"], [data-tool="lower"], [data-tool="smooth"], [data-tool="river"]');
+      resetBtns.forEach(function(btn) {
+        btn.style.display = '';
+        btn.style.opacity = '';
+        btn.disabled = false;
+      });
+      var terrainTools = editorPanel.querySelector('#terrain-tools');
+      if (terrainTools) terrainTools.style.display = '';
+      var riverTools = editorPanel.querySelector('#river-tools');
+      if (riverTools) riverTools.style.display = '';
+    }
+
     mountainGroup = createMountainTerrain(route);
     mountainGroup.visible = false;
     scene.add(mountainGroup);
@@ -3536,6 +4042,10 @@ var ThreeMap = (function() {
     if (enable) {
       editorPanel.style.display = 'block';
       if (editEntryBtn) editEntryBtn.style.display = 'none';
+      var isDEMEdit = terrainMesh && terrainMesh.userData.isDEM;
+      if (isDEMEdit && (editTool === 'raise' || editTool === 'lower' || editTool === 'smooth' || editTool === 'river')) {
+        editTool = 'trail';
+      }
       var isPathTool = (editTool === 'trail' || editTool === 'river');
       controls.enabled = isPathTool;
       if (!isPathTool) updateEditCursorScale();
@@ -3545,7 +4055,7 @@ var ThreeMap = (function() {
         editCursor.visible = false;
         if (riverHandlesGroup) riverHandlesGroup.visible = false;
         rebuildTrailHandles();
-        showEditorToast('路径编辑：拖拽黄色控制点移动路径 · 空白区域可旋转缩放地图');
+        showEditorToast(isDEMEdit ? 'DEM真实地形 · 路径编辑：拖拽控制点移动路径' : '路径编辑：拖拽黄色控制点移动路径 · 空白区域可旋转缩放地图');
       } else if (editTool === 'river') {
         editCursor.visible = false;
         if (trailHandlesGroup) trailHandlesGroup.visible = false;
@@ -4181,7 +4691,7 @@ var ThreeMap = (function() {
     trailHandlesGroup.visible = (editMode && editTool === 'trail');
     if (!trailHandlesGroup.visible) return;
     var pts = ensureWorkingTrailPoints();
-    var size = 60;
+    var size = (terrainMesh && terrainMesh.userData.size) || 60;
     var hMatU = new THREE.MeshStandardMaterial({ color: 0xffaa00, emissive: 0xff6600, emissiveIntensity: 0.8, roughness: 0.3 });
     var hMatS = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffaa00, emissiveIntensity: 1.5, roughness: 0.2 });
     for (var i = 0; i < pts.length; i++) {
@@ -4786,20 +5296,24 @@ var ThreeMap = (function() {
     var riverSrc = ensureWorkingRiverPoints();
     console.log('[River] rebuildRiverRender: points=' + riverSrc.length + ', width=' + riverWidth + ', depth=' + riverDepth);
 
+    var isDEM = terrainMesh.userData.isDEM === true;
+    var terrainSize = terrainMesh.userData.size || 60;
     var positions = terrainMesh.geometry.attributes.position;
-    for (var _ri = 0; _ri < positions.count; _ri++) {
-      positions.setY(_ri, baseHeights[_ri]);
+    if (!isDEM && baseHeights) {
+      for (var _ri = 0; _ri < positions.count; _ri++) {
+        positions.setY(_ri, baseHeights[_ri]);
+      }
+      positions.needsUpdate = true;
     }
-    positions.needsUpdate = true;
 
     rebuildRiverHandles();
 
     if (riverSrc.length < 2) {
       terrainMesh.geometry.computeVertexNormals();
-      updateTerrainColors();
+      if (typeof updateTerrainColors === 'function') updateTerrainColors();
       return;
     }
-    var size = 60;
+    var size = terrainSize;
     var w = riverWidth;
     var d = riverDepth;
     var waterRadius = Math.max(1.0, w * 0.6);
@@ -4819,8 +5333,9 @@ var ThreeMap = (function() {
       var pt = curve2D.getPoint(t);
       var sx = (pt.x - 0.5) * size;
       var sz = (pt.z - 0.5) * size;
-      sx = Math.max(-29.5, Math.min(29.5, sx));
-      sz = Math.max(-29.5, Math.min(29.5, sz));
+      var halfLim = size / 2 - 0.5;
+      sx = Math.max(-halfLim, Math.min(halfLim, sx));
+      sz = Math.max(-halfLim, Math.min(halfLim, sz));
       var sy = getVertexHeightAt(sx, sz) + waterOffsetY;
       waterPoints.push(new THREE.Vector3(sx, sy, sz));
     }
@@ -4858,7 +5373,11 @@ var ThreeMap = (function() {
     mountainGroup.add(glowMesh);
 
     try {
-      applyRiverToTerrain(waterRadius, d);
+      if (!isDEM) {
+        applyRiverToTerrain(waterRadius, d);
+      } else {
+        terrainMesh.geometry.computeVertexNormals();
+      }
       console.log('[River] applyRiverToTerrain completed');
     } catch(e) {
       console.error('[River] applyRiverToTerrain error:', e);
@@ -4885,7 +5404,7 @@ var ThreeMap = (function() {
       return;
     }
 
-    var size = 60;
+    var size = terrainMesh.userData.size || 60;
     var w = riverWidth;
     var channelR = waterRadius || (w * 0.35);
     var d = extraDepth != null ? extraDepth : riverDepth;
@@ -5031,6 +5550,22 @@ var ThreeMap = (function() {
     terrainMesh = null;
     baseHeights = null;
     origHeights = null;
+    currentDEMData = null;
+    hideDEMLoading();
+    if (editorPanel) {
+      var demNotice = editorPanel.querySelector('#dem-notice');
+      if (demNotice) demNotice.remove();
+      var resetBtns = editorPanel.querySelectorAll('[data-tool="raise"], [data-tool="lower"], [data-tool="smooth"], [data-tool="river"]');
+      resetBtns.forEach(function(btn) {
+        btn.style.display = '';
+        btn.style.opacity = '';
+        btn.disabled = false;
+      });
+      var terrainTools = editorPanel.querySelector('#terrain-tools');
+      if (terrainTools) terrainTools.style.display = '';
+      var riverTools = editorPanel.querySelector('#river-tools');
+      if (riverTools) riverTools.style.display = '';
+    }
     riverWidth = 2.5;
     riverDepth = 1.5;
     if (editCursor) { editCursor.visible = false; }
@@ -5103,6 +5638,12 @@ var ThreeMap = (function() {
   }
 
   function dispose() {
+    currentDEMData = null;
+    hideDEMLoading();
+    if (editorPanel) {
+      var demNotice = editorPanel.querySelector('#dem-notice');
+      if (demNotice) demNotice.remove();
+    }
     if (animationId) {
       cancelAnimationFrame(animationId);
     }

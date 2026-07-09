@@ -5,6 +5,7 @@ export default {
     var GITHUB_REPO = env.GITHUB_REPO || 'Adventure_Diary';
     var DATA_PATH = env.DATA_PATH || 'data/user-data.json';
     var SYNC_KEY = env.SYNC_KEY || '';
+    var MAPBOX_TOKEN = env.MAPBOX_TOKEN || '';
     var ALLOWED_ORIGINS = (env.ALLOWED_ORIGINS || 'http://localhost:8080,https://panda8421.github.io').split(',');
 
     var origin = request.headers.get('Origin') || '';
@@ -30,6 +31,18 @@ export default {
     }
 
     var url = new URL(request.url);
+
+    var terrainMatch = url.pathname.match(/^\/api\/terrain\/(\d+)\/(\d+)\/(\d+)\.png$/);
+    if (terrainMatch && request.method === 'GET') {
+      return handleTerrain(
+        parseInt(terrainMatch[1]),
+        parseInt(terrainMatch[2]),
+        parseInt(terrainMatch[3]),
+        MAPBOX_TOKEN,
+        corsHeaders,
+        ctx
+      );
+    }
 
     if (url.pathname === '/api/sync' && request.method === 'GET') {
       return handleGet(GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO, DATA_PATH, corsHeaders);
@@ -177,4 +190,74 @@ function json(headers, data, status) {
     status: status || 200,
     headers: headers
   });
+}
+
+async function handleTerrain(z, x, y, mapboxToken, corsHeaders, ctx) {
+  if (z < 0 || z > 14 || x < 0 || y < 0) {
+    return new Response('Invalid tile coordinates', { status: 400, headers: corsHeaders });
+  }
+
+  var maxTile = Math.pow(2, z);
+  if (x >= maxTile || y >= maxTile) {
+    return new Response('Tile out of range', { status: 400, headers: corsHeaders });
+  }
+
+  var cacheKey = new URL('https://terrain-cache/terrain/' + z + '/' + x + '/' + y + '.png');
+  var cache = caches.default;
+  var cachedResponse = await cache.match(cacheKey);
+  if (cachedResponse) {
+    var headers = new Headers(cachedResponse.headers);
+    headers.set('Access-Control-Allow-Origin', corsHeaders['Access-Control-Allow-Origin']);
+    return new Response(cachedResponse.body, {
+      status: 200,
+      headers: headers
+    });
+  }
+
+  if (!mapboxToken) {
+    return new Response(JSON.stringify({ error: 'MAPBOX_TOKEN not configured' }), {
+      status: 500,
+      headers: Object.assign({}, corsHeaders, { 'Content-Type': 'application/json' })
+    });
+  }
+
+  var mapboxUrl = 'https://api.mapbox.com/v4/mapbox.terrain-rgb/' +
+    z + '/' + x + '/' + y + '.pngraw?access_token=' + mapboxToken;
+
+  try {
+    var mapboxResponse = await fetch(mapboxUrl, {
+      headers: {
+        'User-Agent': 'Adventure-Diary-Worker'
+      }
+    });
+
+    if (!mapboxResponse.ok) {
+      return new Response('Upstream error: ' + mapboxResponse.status, {
+        status: 502,
+        headers: corsHeaders
+      });
+    }
+
+    var responseBody = await mapboxResponse.arrayBuffer();
+
+    var responseHeaders = new Headers({
+      'Content-Type': 'image/png',
+      'Cache-Control': 'public, max-age=2592000',
+      'Access-Control-Allow-Origin': corsHeaders['Access-Control-Allow-Origin'],
+    });
+
+    var newResponse = new Response(responseBody, {
+      status: 200,
+      headers: responseHeaders
+    });
+
+    ctx.waitUntil(cache.put(cacheKey, newResponse.clone()));
+
+    return newResponse;
+  } catch (error) {
+    return new Response('Fetch error: ' + error.message, {
+      status: 502,
+      headers: corsHeaders
+    });
+  }
 }
