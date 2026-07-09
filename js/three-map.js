@@ -2737,6 +2737,35 @@ var ThreeMap = (function() {
     return { group: group, result: result };
   }
 
+  function normalizeRouteLngLatToXY(route) {
+    if (!route || !route.center || !route.terrain) return;
+    var centerLng = route.center.lng;
+    var centerLat = route.center.lat;
+    var radiusKm = route.viewRadiusKm || 5;
+    var metersPerDegLng = 111320 * Math.cos(centerLat * Math.PI / 180);
+    var metersPerDegLat = 110540;
+    var halfSpanMeters = radiusKm * 1000;
+
+    function toXY(pt) {
+      if (pt.x !== undefined && pt.y !== undefined) return pt;
+      if (pt.lng === undefined || pt.lat === undefined) return pt;
+      var dx = (pt.lng - centerLng) * metersPerDegLng;
+      var dz = (pt.lat - centerLat) * metersPerDegLat;
+      pt.x = 0.5 + dx / (halfSpanMeters * 2);
+      pt.y = 0.5 - dz / (halfSpanMeters * 2);
+      return pt;
+    }
+
+    var t = route.terrain;
+    if (t.peaks) t.peaks.forEach(toXY);
+    if (t.trailPoints) t.trailPoints.forEach(toXY);
+    if (t.camps) t.camps.forEach(toXY);
+    if (t.temples) t.temples.forEach(toXY);
+    if (t.trails) t.trails.forEach(function(tr) { if (tr.points) tr.points.forEach(toXY); });
+
+    route.useDEM = false;
+  }
+
   async function enterMountainModeDEM(route) {
     showDEMLoading();
     try {
@@ -3236,6 +3265,7 @@ var ThreeMap = (function() {
         return await enterMountainModeDEM(route);
       } catch(e) {
         console.warn('[ThreeMap] DEM mode failed, falling back to procedural terrain:', e);
+        normalizeRouteLngLatToXY(route);
       }
     }
 
