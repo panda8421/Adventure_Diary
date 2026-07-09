@@ -1641,27 +1641,125 @@ var ThreeMap = (function() {
   function getTerrainHeight(x, y, terrain, seed) {
     if (!terrain || !terrain.peaks) return 0;
     var baseHeight = terrain.baseHeight || 1000;
-    var height = 0;
-    var maxPeakHeight = 0;
-    for (var pi = 0; pi < terrain.peaks.length; pi++) {
-      if (terrain.peaks[pi].height > maxPeakHeight) maxPeakHeight = terrain.peaks[pi].height;
+    var peaks = terrain.peaks;
+    var nPeaks = peaks.length;
+    if (nPeaks === 0) return baseHeight;
+
+    var maxPeakH = peaks[0].height;
+    var cx = 0, cy = 0;
+    for (var pi = 0; pi < nPeaks; pi++) {
+      if (peaks[pi].height > maxPeakH) maxPeakH = peaks[pi].height;
+      cx += peaks[pi].x;
+      cy += peaks[pi].y;
     }
-    var terrainHeight = maxPeakHeight - baseHeight;
-    var noiseVal = fbmNoise(x * 4, y * 4, seed, 5);
-    height = noiseVal * terrainHeight * 0.25;
-    for (var i = 0; i < terrain.peaks.length; i++) {
-      var peak = terrain.peaks[i];
+    cx /= nPeaks;
+    cy /= nPeaks;
+    var terrainRelief = maxPeakH - baseHeight;
+
+    var distToEdge = Math.min(x, 1 - x, y, 1 - y);
+    var edgeFade = Math.min(1, distToEdge * 4);
+    edgeFade = edgeFade * edgeFade * (3 - 2 * edgeFade);
+
+    var distToCenter = Math.sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy));
+    var ringRadius = 0;
+    for (var ri = 0; ri < nPeaks; ri++) {
+      var dxr = peaks[ri].x - cx;
+      var dyr = peaks[ri].y - cy;
+      ringRadius += Math.sqrt(dxr * dxr + dyr * dyr);
+    }
+    ringRadius /= nPeaks;
+
+    var height = 0;
+
+    var macroNoise = fbmNoise(x * 2.0, y * 2.0, seed, 4);
+    height += (macroNoise - 0.5) * terrainRelief * 0.06;
+
+    var basePlateau = terrainRelief * 0.08;
+    var edgeFalloff;
+    if (distToCenter > ringRadius * 0.5) {
+      var ef = (distToCenter - ringRadius * 0.5) / (ringRadius * 1.1);
+      ef = Math.max(0, Math.min(1, ef));
+      edgeFalloff = 1.0 - ef * ef * (3 - 2 * ef);
+    } else {
+      edgeFalloff = 1.0;
+    }
+    height += basePlateau * edgeFalloff;
+
+    if (distToCenter < ringRadius * 0.40) {
+      var bf = distToCenter / (ringRadius * 0.40);
+      var basinDip = (1.0 - bf * bf * (3 - 2 * bf)) * terrainRelief * 0.20;
+      height -= basinDip;
+    }
+
+    var ridges = terrain.ridgeConnections || [];
+    var ridgeInfluence = 0;
+    for (var ri2 = 0; ri2 < ridges.length; ri2++) {
+      var rc = ridges[ri2];
+      var pA = peaks[rc[0]];
+      var pB = peaks[rc[1]];
+      if (!pA || !pB) continue;
+      var ax = pA.x, ay = pA.y;
+      var bx = pB.x, by = pB.y;
+      var abx = bx - ax, aby = by - ay;
+      var abLen2 = abx * abx + aby * aby;
+      if (abLen2 < 0.0001) continue;
+      var apx = x - ax, apy = y - ay;
+      var t = Math.max(0, Math.min(1, (apx * abx + apy * aby) / abLen2));
+      var px = ax + abx * t;
+      var py = ay + aby * t;
+      var rdx = x - px, rdy = y - py;
+      var distToRidge = Math.sqrt(rdx * rdx + rdy * rdy);
+      var ridgeWidth = 0.028 + Math.min(1.0, Math.sqrt(abLen2) * 1.5) * 0.05;
+      var ridgeFalloff = Math.exp(-(distToRidge * distToRidge) / (ridgeWidth * ridgeWidth));
+      var ridgeSaddle = 0.55 + 0.45 * Math.sin(t * Math.PI);
+      var ridgeH = ((pA.height - baseHeight) * (1 - t) + (pB.height - baseHeight) * t) * ridgeSaddle;
+      ridgeH *= 0.50;
+      ridgeInfluence = Math.max(ridgeInfluence, ridgeFalloff * ridgeH);
+    }
+    height += ridgeInfluence;
+
+    var peakField = 0;
+    for (var i = 0; i < nPeaks; i++) {
+      var peak = peaks[i];
       var dx = x - peak.x;
       var dy = y - peak.y;
       var dist = Math.sqrt(dx * dx + dy * dy);
-      var peakWidth = 0.08 + (peak.height - baseHeight) / 15000;
-      var peakInfluence = Math.exp(-(dist * dist) / (peakWidth * peakWidth));
-      var peakHeight = peak.height - baseHeight - noiseVal * terrainHeight * 0.25;
-      height += peakInfluence * peakHeight;
+      var peakBaseRadius = 0.085 + (peak.height - baseHeight) / 12000;
+      var summitRadius = 0.032;
+      var peakFactor;
+      if (dist < summitRadius) {
+        peakFactor = 1.0;
+      } else {
+        var nd = (dist - summitRadius) / (peakBaseRadius - summitRadius);
+        nd = Math.max(0, Math.min(1, nd));
+        peakFactor = Math.exp(-nd * nd * 1.8);
+      }
+      var localBase = basePlateau * edgeFalloff + ridgeInfluence;
+      var peakRelief = (peak.height - baseHeight) - localBase;
+      peakRelief = Math.max(peakRelief * 0.6, terrainRelief * 0.12);
+      peakField = Math.max(peakField, peakFactor * peakRelief);
     }
-    var detailNoise = fbmNoise(x * 12, y * 12, seed + 50, 3);
-    height += (detailNoise - 0.5) * (terrainHeight * 0.06);
-    return baseHeight + height;
+    height += peakField;
+
+    var ridgeNoise = ridgeNoiseVal(x * 5, y * 5, seed + 200, 4);
+    height += ridgeNoise * terrainRelief * 0.04;
+
+    var valleyNoise = fbmNoise(x * 7 + 100, y * 7 + 100, seed + 300, 4);
+    height -= (valleyNoise - 0.35) * terrainRelief * 0.06;
+
+    var detailNoise = fbmNoise(x * 14, y * 14, seed + 50, 3);
+    height += (detailNoise - 0.5) * terrainRelief * 0.025;
+
+    var microNoise = fbmNoise(x * 28, y * 28, seed + 77, 2);
+    height += (microNoise - 0.5) * terrainRelief * 0.008;
+
+    height *= edgeFade;
+
+    var finalH = baseHeight + height;
+    var minFloor = baseHeight - terrainRelief * 0.05;
+    if (finalH < minFloor) finalH = minFloor;
+
+    return finalH;
   }
 
   // 获取地形颜色（基于高度）
@@ -1670,7 +1768,44 @@ var ThreeMap = (function() {
     t = Math.max(0, Math.min(1, t));
     var style = terrain.style || 'alpine_meadow';
     var color = new THREE.Color();
-    if (style === 'snow_mountain') {
+    if (style === 'alpine_meadow') {
+      if (t < 0.15) {
+        var tt = t / 0.15;
+        color.setRGB(
+          0.10 + tt * 0.06,
+          0.18 + tt * 0.10,
+          0.12 + tt * 0.05
+        );
+      } else if (t < 0.40) {
+        var tt2 = (t - 0.15) / 0.25;
+        color.setRGB(
+          0.16 + tt2 * 0.14,
+          0.28 + tt2 * 0.08,
+          0.17 + tt2 * 0.02
+        );
+      } else if (t < 0.65) {
+        var tt3 = (t - 0.40) / 0.25;
+        color.setRGB(
+          0.30 + tt3 * 0.10,
+          0.36 + tt3 * 0.04,
+          0.19 + tt3 * 0.06
+        );
+      } else if (t < 0.85) {
+        var tt4 = (t - 0.65) / 0.20;
+        color.setRGB(
+          0.40 + tt4 * 0.08,
+          0.40 + tt4 * 0.06,
+          0.25 + tt4 * 0.10
+        );
+      } else {
+        var tt5 = (t - 0.85) / 0.15;
+        color.setRGB(
+          0.48 + tt5 * 0.12,
+          0.46 + tt5 * 0.14,
+          0.35 + tt5 * 0.18
+        );
+      }
+    } else if (style === 'snow_mountain') {
       if (t < 0.25) {
         color.setHSL(0.08, 0.15, 0.22 + t * 0.08);
       } else if (t < 0.55) {
@@ -2941,8 +3076,9 @@ var ThreeMap = (function() {
       if (terrain.peaks[p].height > maxHeight) maxHeight = terrain.peaks[p].height;
     }
     var size = 60;
-    var segments = 128;
-    var heightScale = 0.018;
+    var segments = 192;
+    var vScale = (terrain.verticalScale || 1.0);
+    var heightScale = 0.022 * vScale;
 
     var savedMod = loadTerrainMod(route.id);
 
