@@ -5,9 +5,9 @@
   const DEFAULT_ZOOM = 12;
   const DEFAULT_GRID_SIZE = 256;
   const DEFAULT_MOUNTAIN_SIZE = 80;
-  const WORKER_BASE = '';
+  const TILE_SOURCE = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium';
   const MEM_CACHE_LIMIT = 64;
-  const LS_CACHE_KEY_PREFIX = 'dem_tile_';
+  const LS_CACHE_KEY_PREFIX = 'dem_tile_v2_';
   const LS_CACHE_MAX_BYTES = 50 * 1024 * 1024;
 
   const _memCache = new Map();
@@ -36,6 +36,10 @@
     const ix = Math.floor(x - tx * TILE_SIZE);
     const iy = Math.floor(y - ty * TILE_SIZE);
     return { tx, ty, ix, iy };
+  }
+
+  function decodeTerrarium(R, G, B) {
+    return (R * 256 + G + B / 256) - 32768;
   }
 
   function decodeTerrainRGB(R, G, B) {
@@ -119,7 +123,7 @@
       return lsCached;
     }
 
-    const url = `${WORKER_BASE}/api/terrain/${z}/${x}/${y}.png`;
+    const url = `${TILE_SOURCE}/${z}/${x}/${y}.png`;
 
     let img;
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -145,7 +149,7 @@
       const r = pixels[i * 4];
       const g = pixels[i * 4 + 1];
       const b = pixels[i * 4 + 2];
-      heights[i] = decodeTerrainRGB(r, g, b);
+      heights[i] = decodeTerrarium(r, g, b);
     }
 
     memCacheSet(cacheKey, heights);

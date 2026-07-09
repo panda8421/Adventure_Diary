@@ -2898,7 +2898,6 @@ var ThreeMap = (function() {
     if (t.temples) t.temples.forEach(toXY);
     if (t.trails) t.trails.forEach(function(tr) { if (tr.points) tr.points.forEach(toXY); });
 
-    route.useDEM = false;
   }
 
   async function enterMountainModeDEM(route) {
