@@ -63,6 +63,22 @@ var ThreeMap = (function() {
   var riverWidth = 2.5;
   var riverDepth = 1.5;
 
+  // 台顶编辑
+  var peakHandlesGroup = null;
+  var selectedPeakIndex = -1;
+  var hoverPeakIndex = -1;
+  var isDraggingPeak = false;
+  var workingPeakPositions = null;
+  var pointerDownOnPeak = false;
+  var peakMeshesRefs = [];
+  var peakLabelRefs = [];
+  var peakBeamMesh = null;
+  var peakBeamGlowMesh = null;
+  var peakBeamCoreMesh = null;
+  var peakHaloMesh = null;
+  var peakParticles = [];
+  var peakOrigEmissive = [];
+
   // POI用户标记系统
   var POI_TYPES = {
     water:   { name: '水源',     icon: '💧', color: 0x4499ff, emissive: 0x2266cc, shape: 'drop' },
@@ -209,13 +225,13 @@ var ThreeMap = (function() {
         return;
       }
       if (e.button !== 0) return;
-      var isPathTool = (editTool === 'trail' || editTool === 'river');
+      var isPathTool = (editTool === 'trail' || editTool === 'river' || editTool === 'peak');
       if (!isPathTool) {
         e.stopImmediatePropagation();
         e.preventDefault();
         return;
       }
-      if (e.shiftKey) {
+      if (e.shiftKey && editTool !== 'peak') {
         e.stopImmediatePropagation();
         e.preventDefault();
         return;
@@ -227,6 +243,8 @@ var ThreeMap = (function() {
       } else if (editTool === 'river') {
         hitHandle = pickRiverHandle(e.clientX, e.clientY) >= 0;
         hitLine = pickRiverLine(e.clientX, e.clientY);
+      } else if (editTool === 'peak') {
+        hitHandle = pickPeakMesh(e.clientX, e.clientY) >= 0;
       }
       if (hitHandle || hitLine) {
         e.stopImmediatePropagation();
@@ -235,7 +253,7 @@ var ThreeMap = (function() {
     }, true);
     renderer.domElement.addEventListener('touchstart', function(e) {
       if (!editMode || viewMode !== 'mountain') return;
-      var isPathTool = (editTool === 'trail' || editTool === 'river');
+      var isPathTool = (editTool === 'trail' || editTool === 'river' || editTool === 'peak');
       if (!isPathTool) {
         e.stopImmediatePropagation();
         e.preventDefault();
@@ -250,6 +268,8 @@ var ThreeMap = (function() {
       } else if (editTool === 'river') {
         hitHandle = pickRiverHandle(t.clientX, t.clientY) >= 0;
         hitLine = pickRiverLine(t.clientX, t.clientY);
+      } else if (editTool === 'peak') {
+        hitHandle = pickPeakMesh(t.clientX, t.clientY) >= 0;
       }
       if (hitHandle || hitLine) {
         e.stopImmediatePropagation();
@@ -259,7 +279,7 @@ var ThreeMap = (function() {
     renderer.domElement.addEventListener('wheel', function(e) {
       if (isCameraAnimating) { e.preventDefault(); e.stopImmediatePropagation(); return; }
       // 地形笔刷编辑模式（抬升/降低/平滑）：中心缩放（保持原有行为）
-      if (editMode && viewMode === 'mountain' && editTool !== 'trail' && editTool !== 'river') {
+      if (editMode && viewMode === 'mountain' && editTool !== 'trail' && editTool !== 'river' && editTool !== 'peak') {
         e.stopImmediatePropagation();
         e.preventDefault();
         var delta = e.deltaY > 0 ? 1.08 : 1 / 1.08;
@@ -1306,6 +1326,11 @@ var ThreeMap = (function() {
           marker.userData.icon.position.y = 0.95 + bob;
         }
       });
+    }
+
+    // 台顶选中特效脉冲 & 粒子流动
+    if (selectedPeakIndex >= 0 && peakBeamCoreMesh && peakBeamCoreMesh.visible) {
+      updatePeakSelectionEffect(selectedPeakIndex);
     }
 
     // 渲染
@@ -2587,6 +2612,37 @@ var ThreeMap = (function() {
     return { x: (p.x + size / 2) / size, y: (p.z + size / 2) / size };
   }
 
+  function createPagodaMesh() {
+    var group = new THREE.Group();
+
+    var stoneMat = new THREE.MeshStandardMaterial({ color: 0xd4c8b0, roughness: 0.8, metalness: 0.05 });
+    var woodMat = new THREE.MeshStandardMaterial({ color: 0x8b4513, roughness: 0.7, metalness: 0.1 });
+    var tileMat = new THREE.MeshStandardMaterial({ color: 0x4a4a4a, roughness: 0.85, metalness: 0.0, side: THREE.DoubleSide });
+    var goldMat = new THREE.MeshStandardMaterial({ color: 0xffd700, emissive: 0xcc9900, emissiveIntensity: 0.4, roughness: 0.3, metalness: 0.5 });
+
+    function addPart(geom, mat, y, rotY) {
+      var mesh = new THREE.Mesh(geom, mat);
+      mesh.position.y = y;
+      if (rotY) mesh.rotation.y = rotY;
+      mesh.userData.isPeak = true;
+      group.add(mesh);
+      return mesh;
+    }
+
+    var s = 0.55;
+    addPart(new THREE.CylinderGeometry(1.2*s, 1.3*s, 0.5*s, 8), stoneMat, 0.25*s);
+    addPart(new THREE.CylinderGeometry(0.95*s, 1.0*s, 1.2*s, 8), woodMat, (0.5+0.6)*s);
+    addPart(new THREE.ConeGeometry(1.6*s, 0.6*s, 8, 1, true), tileMat, (0.5+1.2+0.3)*s, Math.PI / 8);
+    addPart(new THREE.CylinderGeometry(0.75*s, 0.8*s, 1.0*s, 8), woodMat, (0.5+1.2+0.6+0.5)*s);
+    addPart(new THREE.ConeGeometry(1.3*s, 0.5*s, 8, 1, true), tileMat, (0.5+1.2+0.6+1.0+0.25)*s, Math.PI / 8);
+    addPart(new THREE.SphereGeometry(0.22*s, 10, 8), goldMat, (0.5+1.2+0.6+1.0+0.5+0.22)*s);
+    addPart(new THREE.ConeGeometry(0.18*s, 0.9*s, 8), goldMat, (0.5+1.2+0.6+1.0+0.5+0.44+0.45)*s);
+
+    group.userData.isPeak = true;
+    group.userData.pagodaScale = s;
+    return group;
+  }
+
   function createDEMTerrainMesh(dem, route) {
     var size = dem.mountainSize;
     var gridSize = dem.gridSize;
@@ -2594,24 +2650,50 @@ var ThreeMap = (function() {
     var verticalScale = dem.verticalScale;
     var worldScale = (dem.radiusKm * 2000) / size;
 
-    var geometry = new THREE.PlaneGeometry(size, size, segments, segments);
-    geometry.rotateX(-Math.PI / 2);
-    var positions = geometry.attributes.position;
-    var heightValues = new Float32Array(positions.count);
+    var geometry = new THREE.BufferGeometry();
+    var positions = new Float32Array(gridSize * gridSize * 3);
+    var uvs = new Float32Array(gridSize * gridSize * 2);
+    var indices = [];
+    var heightValues = new Float32Array(gridSize * gridSize);
 
     var minScaledH = Infinity;
     var maxScaledH = -Infinity;
 
-    for (var i = 0; i < positions.count; i++) {
-      var col = i % (segments + 1);
-      var row = Math.floor(i / (segments + 1));
-      var h = dem.heights[row * gridSize + col];
-      var relH = (h - dem.centerHeight) / worldScale * verticalScale;
-      heightValues[i] = relH;
-      positions.setY(i, relH);
-      if (relH < minScaledH) minScaledH = relH;
-      if (relH > maxScaledH) maxScaledH = relH;
+    for (var row = 0; row < gridSize; row++) {
+      for (var col = 0; col < gridSize; col++) {
+        var vi = row * gridSize + col;
+        var u = col / segments;
+        var v = row / segments;
+        var x = (u - 0.5) * size;
+        var z = (v - 0.5) * size;
+        var h = dem.heights[row * gridSize + col];
+        var relH = (h - dem.centerHeight) / worldScale * verticalScale;
+
+        positions[vi * 3] = x;
+        positions[vi * 3 + 1] = relH;
+        positions[vi * 3 + 2] = z;
+        uvs[vi * 2] = u;
+        uvs[vi * 2 + 1] = 1 - v;
+        heightValues[vi] = relH;
+
+        if (relH < minScaledH) minScaledH = relH;
+        if (relH > maxScaledH) maxScaledH = relH;
+      }
     }
+
+    for (var r = 0; r < segments; r++) {
+      for (var c = 0; c < segments; c++) {
+        var a = r * gridSize + c;
+        var b = r * gridSize + c + 1;
+        var d = (r + 1) * gridSize + c;
+        var e2 = (r + 1) * gridSize + c + 1;
+        indices.push(a, d, e2, a, e2, b);
+      }
+    }
+
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    geometry.setIndex(indices);
     geometry.computeVertexNormals();
 
     var shaderMat = createTerrainShaderMaterial();
@@ -2659,14 +2741,33 @@ var ThreeMap = (function() {
 
     var terrain = route.terrain;
     var groundOffset = 0.4;
+    var isWutaishan = route.id === 'wutaishan';
 
-    var peakConeGeo = new THREE.ConeGeometry(0.6, 2.0, 8);
-    var peakConeMat = new THREE.MeshStandardMaterial({
-      color: 0xffffff,
-      emissive: 0x4488ff,
-      emissiveIntensity: 0.4,
-      roughness: 0.3
-    });
+    if (isWutaishan) {
+      console.log('[DEM] center:', route.center, 'bounds:', dem.bounds);
+      console.log('[DEM] centerHeight:', dem.centerHeight, 'minH:', dem.minHeight, 'maxH:', dem.maxHeight, 'worldScale:', result.worldScale.toFixed(2), 'verticalScale:', result.verticalScale);
+      for (var di = 0; di < terrain.peaks.length; di++) {
+        var pk = terrain.peaks[di];
+        var ppn = lngLatToNormalizedXY(pk.lng, pk.lat, dem);
+        var pdx = (ppn.x - 0.5) * size;
+        var pdz = (ppn.y - 0.5) * size;
+        var ph = dem.getHeight(pk.lng, pk.lat);
+        var py = (ph - dem.centerHeight) / result.worldScale * result.verticalScale;
+        console.log('[DEM] peak', pk.name, 'lng/lat:', pk.lng, pk.lat, '3D pos:', pdx.toFixed(2), py.toFixed(2), pdz.toFixed(2), 'alt:', ph.toFixed(0) + 'm');
+      }
+    }
+
+    var peakConeGeo = null;
+    var peakConeMat = null;
+    if (!isWutaishan) {
+      peakConeGeo = new THREE.ConeGeometry(0.6, 2.0, 8);
+      peakConeMat = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        emissive: 0x4488ff,
+        emissiveIntensity: 0.4,
+        roughness: 0.3
+      });
+    }
 
     for (var pi = 0; pi < terrain.peaks.length; pi++) {
       var peak = terrain.peaks[pi];
@@ -2676,8 +2777,17 @@ var ThreeMap = (function() {
       var peakRealH = dem.getHeight(peak.lng, peak.lat);
       var peakY = (peakRealH - dem.centerHeight) / result.worldScale * result.verticalScale;
 
-      var peakMesh = new THREE.Mesh(peakConeGeo, peakConeMat);
-      peakMesh.position.set(peakX, peakY + 1.1, peakZ);
+      var peakMesh;
+      var labelY;
+      if (isWutaishan) {
+        peakMesh = createPagodaMesh();
+        peakMesh.position.set(peakX, peakY + 0.08, peakZ);
+        labelY = peakY + 4;
+      } else {
+        peakMesh = new THREE.Mesh(peakConeGeo, peakConeMat);
+        peakMesh.position.set(peakX, peakY + 1.1, peakZ);
+        labelY = peakY + 4.5;
+      }
       peakMesh.userData.isPeak = true;
       peakMesh.userData.peakName = peak.name;
       peakMesh.userData.peakHeight = peak.height;
@@ -2700,8 +2810,9 @@ var ThreeMap = (function() {
       var lt = new THREE.CanvasTexture(lc);
       var lm = new THREE.SpriteMaterial({ map: lt, transparent: true, depthTest: false, depthWrite: false });
       var ls = new THREE.Sprite(lm);
-      ls.position.set(peakX, peakY + 4.5, peakZ);
+      ls.position.set(peakX, labelY, peakZ);
       ls.scale.set(6, 1.5, 1);
+      ls.userData.isPeakLabel = true;
       group.add(ls);
     }
 
@@ -2965,11 +3076,19 @@ var ThreeMap = (function() {
         if (savedMod.trailCompletedStatus) trailCompletedStatus = JSON.parse(JSON.stringify(savedMod.trailCompletedStatus));
         if (savedMod.trailNameOverrides) trailNameOverrides = JSON.parse(JSON.stringify(savedMod.trailNameOverrides));
         if (savedMod.deletedDefaultTrailIds) deletedDefaultTrailIds = JSON.parse(JSON.stringify(savedMod.deletedDefaultTrailIds));
+        if (savedMod.peakPositions && savedMod.peakPositions.length > 0) {
+          workingPeakPositions = savedMod.peakPositions.map(function(p) { return { x: p.x, y: p.y }; });
+          for (var ppi = 0; ppi < t.peaks.length && ppi < workingPeakPositions.length; ppi++) {
+            t.peaks[ppi].x = workingPeakPositions[ppi].x;
+            t.peaks[ppi].y = workingPeakPositions[ppi].y;
+          }
+        }
       }
       initActiveTrail();
       if (workingRiverPoints && workingRiverPoints.length >= 2) {
         rebuildRiverRender();
       }
+      rebuildPeakMarkers();
       rebuildPOIMarkers();
 
       mapGroup.visible = false;
@@ -3132,6 +3251,7 @@ var ThreeMap = (function() {
     terrainMesh = mesh;
 
     // 山峰标记
+    var isWutaishanTerrain = route.id === 'wutaishan';
     for (var pi = 0; pi < terrain.peaks.length; pi++) {
       var peak = terrain.peaks[pi];
       var peakX = (peak.x - 0.5) * size;
@@ -3139,15 +3259,24 @@ var ThreeMap = (function() {
       var peakH = getTerrainHeight(peak.x, peak.y, terrain, seed);
       var peakY = (peakH - baseHeight) * heightScale;
 
-      var peakGeo = new THREE.ConeGeometry(0.7, 2.2, 8);
-      var peakMat = new THREE.MeshStandardMaterial({
-        color: 0xffffff,
-        emissive: 0x4488ff,
-        emissiveIntensity: 0.3,
-        roughness: 0.3
-      });
-      var peakMesh = new THREE.Mesh(peakGeo, peakMat);
-      peakMesh.position.set(peakX, peakY + 1.2, peakZ);
+      var peakMesh;
+      var labelY;
+      if (isWutaishanTerrain) {
+        peakMesh = createPagodaMesh();
+        peakMesh.position.set(peakX, peakY, peakZ);
+        labelY = peakY + 4;
+      } else {
+        var peakGeo = new THREE.ConeGeometry(0.7, 2.2, 8);
+        var peakMat = new THREE.MeshStandardMaterial({
+          color: 0xffffff,
+          emissive: 0x4488ff,
+          emissiveIntensity: 0.3,
+          roughness: 0.3
+        });
+        peakMesh = new THREE.Mesh(peakGeo, peakMat);
+        peakMesh.position.set(peakX, peakY + 1.2, peakZ);
+        labelY = peakY + 5;
+      }
       peakMesh.userData.isPeak = true;
       peakMesh.userData.peakName = peak.name;
       peakMesh.userData.peakHeight = peak.height;
@@ -3170,7 +3299,7 @@ var ThreeMap = (function() {
       var lt = new THREE.CanvasTexture(lc);
       var lm = new THREE.SpriteMaterial({ map: lt, transparent: true, depthTest: false, depthWrite: false });
       var ls = new THREE.Sprite(lm);
-      ls.position.set(peakX, peakY + 5, peakZ);
+      ls.position.set(peakX, labelY, peakZ);
       ls.scale.set(6, 1.5, 1);
       group.add(ls);
     }
@@ -3347,6 +3476,12 @@ var ThreeMap = (function() {
     riverWidth = 2.5;
     riverDepth = 1.5;
     workingCustomTrails = null;
+    workingPeakPositions = null;
+    selectedPeakIndex = -1;
+    hoverPeakIndex = -1;
+    isDraggingPeak = false;
+    pointerDownOnPeak = false;
+    hidePeakSelectionEffect();
     activeTrailId = null;
     trailDirectionOverrides = {};
     trailCompletedStatus = {};
@@ -3394,6 +3529,63 @@ var ThreeMap = (function() {
       });
       riverHandlesGroup = null;
     }
+    if (peakHandlesGroup) {
+      scene.remove(peakHandlesGroup);
+      peakHandlesGroup.traverse(function(obj) {
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) {
+          if (obj.material.map) obj.material.map.dispose();
+          obj.material.dispose();
+        }
+      });
+      peakHandlesGroup = null;
+    }
+    if (peakBeamMesh) {
+      scene.remove(peakBeamMesh);
+      if (peakBeamMesh.geometry) peakBeamMesh.geometry.dispose();
+      if (peakBeamMesh.material) peakBeamMesh.material.dispose();
+      peakBeamMesh = null;
+    }
+    if (peakBeamCoreMesh) {
+      scene.remove(peakBeamCoreMesh);
+      if (peakBeamCoreMesh.geometry) peakBeamCoreMesh.geometry.dispose();
+      if (peakBeamCoreMesh.material) peakBeamCoreMesh.material.dispose();
+      peakBeamCoreMesh = null;
+    }
+    if (peakBeamGlowMesh) {
+      scene.remove(peakBeamGlowMesh);
+      if (peakBeamGlowMesh.geometry) peakBeamGlowMesh.geometry.dispose();
+      if (peakBeamGlowMesh.material) peakBeamGlowMesh.material.dispose();
+      peakBeamGlowMesh = null;
+    }
+    if (peakHaloMesh) {
+      if (peakHaloMesh.userData && peakHaloMesh.userData.outerRing) {
+        var or = peakHaloMesh.userData.outerRing;
+        scene.remove(or);
+        if (or.geometry) or.geometry.dispose();
+        if (or.material) or.material.dispose();
+      }
+      scene.remove(peakHaloMesh);
+      if (peakHaloMesh.geometry) peakHaloMesh.geometry.dispose();
+      if (peakHaloMesh.material) peakHaloMesh.material.dispose();
+      peakHaloMesh = null;
+    }
+    for (var pdi = 0; pdi < peakParticles.length; pdi++) {
+      var pp = peakParticles[pdi];
+      if (pp.userData && pp.userData.coreMesh) {
+        if (pp.userData.coreMesh.geometry) pp.userData.coreMesh.geometry.dispose();
+        if (pp.userData.coreMat) pp.userData.coreMat.dispose();
+      }
+      if (pp.userData && pp.userData.glowMesh) {
+        if (pp.userData.glowMesh.geometry) pp.userData.glowMesh.geometry.dispose();
+        if (pp.userData.glowMat) pp.userData.glowMat.dispose();
+      }
+      scene.remove(pp);
+    }
+    peakParticles = [];
+    peakMeshesRefs = [];
+    peakLabelRefs = [];
+    peakOrigEmissive = [];
 
     if (route.useDEM && window.DEMLoader) {
       try {
@@ -3456,10 +3648,16 @@ var ThreeMap = (function() {
       if (savedMod.deletedDefaultTrailIds) {
         deletedDefaultTrailIds = JSON.parse(JSON.stringify(savedMod.deletedDefaultTrailIds));
       }
+      if (savedMod.peakPositions && savedMod.peakPositions.length > 0) {
+        workingPeakPositions = savedMod.peakPositions.map(function(p) { return { x: p.x, y: p.y }; });
+      }
     }
     initActiveTrail();
     if (workingRiverPoints && workingRiverPoints.length >= 2) {
       rebuildRiverRender();
+    }
+    if (workingPeakPositions) {
+      rebuildPeakMarkers();
     }
     rebuildPOIMarkers();
 
@@ -3618,6 +3816,11 @@ var ThreeMap = (function() {
       data.riverWidth = riverWidth;
       data.riverDepth = riverDepth;
     }
+    if (workingPeakPositions) {
+      data.peakPositions = workingPeakPositions.map(function(p) {
+        return { x: p.x, y: p.y };
+      });
+    }
     if (workingCustomTrails && workingCustomTrails.length > 0) {
       data.customTrails = workingCustomTrails.map(function(t) {
         return { id: t.id, name: t.name, direction: t.direction, points: t.points.map(function(p) { return { x: p.x, y: p.y, name: p.name }; }) };
@@ -3639,7 +3842,7 @@ var ThreeMap = (function() {
     try {
       localStorage.setItem(getStorageKey(currentMountainRoute.id), JSON.stringify(data));
       if (typeof SyncModule !== 'undefined' && SyncModule.markDirty) SyncModule.markDirty('terrainMods');
-      showEditorToast('地形、路径和河流已保存');
+      showEditorToast('地形、路径、河流和台顶已保存');
     } catch(e) {
       showEditorToast('保存失败');
     }
@@ -3723,6 +3926,12 @@ var ThreeMap = (function() {
     riverWidth = 2.5;
     riverDepth = 1.5;
     workingCustomTrails = null;
+    workingPeakPositions = null;
+    selectedPeakIndex = -1;
+    hoverPeakIndex = -1;
+    isDraggingPeak = false;
+    pointerDownOnPeak = false;
+    hidePeakSelectionEffect();
     activeTrailId = null;
     trailDirectionOverrides = {};
     trailCompletedStatus = {};
@@ -3730,6 +3939,8 @@ var ThreeMap = (function() {
     initActiveTrail();
     try { localStorage.removeItem(getStorageKey(currentMountainRoute.id)); } catch(e) {}
     rebuildRiverRender();
+    rebuildPeakMarkers();
+    rebuildPeakHandles();
     var rwSlider = editorPanel ? editorPanel.querySelector('#river-width') : null;
     var rwVal = editorPanel ? editorPanel.querySelector('#river-width-val') : null;
     var rdSlider = editorPanel ? editorPanel.querySelector('#river-depth') : null;
@@ -3836,17 +4047,30 @@ var ThreeMap = (function() {
     for (var ti = 0; ti < trailMeshes.length; ti++) {
       mountainGroup.remove(trailMeshes[ti]);
     }
+    var wpsGlobal = workingPeakPositions;
     for (var pi = 0; pi < terrain.peaks.length; pi++) {
       var peak = terrain.peaks[pi];
-      var peakX = (peak.x - 0.5) * size;
-      var peakZ = (peak.y - 0.5) * size;
+      var useWp = wpsGlobal && wpsGlobal[pi] && wpsGlobal[pi].x !== undefined;
+      var px = useWp ? wpsGlobal[pi].x : peak.x;
+      var pz = useWp ? wpsGlobal[pi].y : peak.y;
+      var peakX = (px - 0.5) * size;
+      var peakZ = (pz - 0.5) * size;
       var peakY = getVertexHeightAt(peakX, peakZ);
-      var peakGeo = new THREE.ConeGeometry(0.7, 2.2, 8);
-      var peakMat = new THREE.MeshStandardMaterial({
-        color: 0xffffff, emissive: 0x4488ff, emissiveIntensity: 0.3, roughness: 0.3
-      });
-      var peakMesh = new THREE.Mesh(peakGeo, peakMat);
-      peakMesh.position.set(peakX, peakY + 1.2, peakZ);
+      var peakMesh;
+      var labelY;
+      if (route.id === 'wutaishan') {
+        peakMesh = createPagodaMesh();
+        peakMesh.position.set(peakX, peakY + 0.08, peakZ);
+        labelY = peakY + 4;
+      } else {
+        var peakGeo = new THREE.ConeGeometry(0.7, 2.2, 8);
+        var peakMat = new THREE.MeshStandardMaterial({
+          color: 0xffffff, emissive: 0x4488ff, emissiveIntensity: 0.3, roughness: 0.3
+        });
+        peakMesh = new THREE.Mesh(peakGeo, peakMat);
+        peakMesh.position.set(peakX, peakY + 1.2, peakZ);
+        labelY = peakY + 5;
+      }
       peakMesh.userData.isPeak = true;
       mountainGroup.add(peakMesh);
       var lc = document.createElement('canvas');
@@ -3862,7 +4086,7 @@ var ThreeMap = (function() {
       var lt = new THREE.CanvasTexture(lc);
       var lm = new THREE.SpriteMaterial({ map: lt, transparent: true, depthTest: false, depthWrite: false });
       var ls = new THREE.Sprite(lm);
-      ls.position.set(peakX, peakY + 5, peakZ);
+      ls.position.set(peakX, labelY, peakZ);
       ls.scale.set(6, 1.5, 1);
       ls.userData.isPeakLabel = true;
       mountainGroup.add(ls);
@@ -3998,6 +4222,7 @@ var ThreeMap = (function() {
       + '    <button data-tool="smooth" style="flex:1;min-width:60px;padding:6px;background:rgba(180,160,80,0.2);border:1px solid rgba(200,180,100,0.4);border-radius:6px;color:#ddcc88;cursor:pointer;font-size:12px;">≈ 平滑</button>'
       + '    <button data-tool="trail" style="flex:1;min-width:60px;padding:6px;background:rgba(60,80,100,0.2);border:1px solid rgba(100,130,160,0.3);border-radius:6px;color:#ffdd66;cursor:pointer;font-size:12px;">🛤️ 路径</button>'
       + '    <button data-tool="river" style="flex:1;min-width:60px;padding:6px;background:rgba(40,90,140,0.2);border:1px solid rgba(80,150,220,0.3);border-radius:6px;color:#66bbff;cursor:pointer;font-size:12px;">🌊 河流</button>'
+      + '    <button data-tool="peak" style="flex:1;min-width:60px;padding:6px;background:rgba(160,80,180,0.2);border:1px solid rgba(200,120,220,0.3);border-radius:6px;color:#dd99ff;cursor:pointer;font-size:12px;">🏔️ 台顶</button>'
       + '  </div>'
       + '</div>'
       + '<div id="terrain-tools">'
@@ -4032,6 +4257,12 @@ var ThreeMap = (function() {
       + '    <div>⌫ Delete 删除选中点</div>'
       + '  </div>'
       + '</div>'
+      + '<div id="peak-tools" style="display:none;margin-bottom:14px;padding:10px;background:rgba(30,15,50,0.6);border-radius:8px;border:1px solid rgba(200,120,220,0.2);">'
+      + '  <div style="color:#dd99ff;font-size:12px;line-height:1.8;">'
+      + '    <div>🖱️ 拖拽紫色控制点移动台顶</div>'
+      + '    <div>💾 保存后位置生效</div>'
+      + '  </div>'
+      + '</div>'
       + '<div style="display:flex;gap:6px;margin-bottom:8px;">'
       + '  <button id="edit-save" style="flex:1;padding:7px;background:rgba(100,200,140,0.25);border:1px solid rgba(100,220,160,0.5);border-radius:6px;color:#88ffbb;cursor:pointer;font-size:12px;">💾 保存</button>'
       + '  <button id="edit-reset" style="flex:1;padding:7px;background:rgba(200,80,80,0.2);border:1px solid rgba(220,100,100,0.4);border-radius:6px;color:#ffaaaa;cursor:pointer;font-size:12px;">↺ 重置</button>'
@@ -4046,43 +4277,70 @@ var ThreeMap = (function() {
       var terrainTools = panel.querySelector('#terrain-tools');
       var trailTools = panel.querySelector('#trail-tools');
       var riverTools = panel.querySelector('#river-tools');
-      var isPathTool = (tool === 'trail' || tool === 'river');
+      var peakTools = panel.querySelector('#peak-tools');
+      var isPathTool = (tool === 'trail' || tool === 'river' || tool === 'peak');
       if (tool === 'trail') {
         if (terrainTools) terrainTools.style.display = 'none';
         if (trailTools) trailTools.style.display = 'block';
         if (riverTools) riverTools.style.display = 'none';
+        if (peakTools) peakTools.style.display = 'none';
         if (editCursor) editCursor.visible = false;
         selectedTrailIndex = -1;
         isDraggingTrail = false;
         pointerDownOnTrail = false;
         rebuildTrailHandles();
         if (riverHandlesGroup) riverHandlesGroup.visible = false;
+        if (peakHandlesGroup) peakHandlesGroup.visible = false;
         if (editMode && controls) controls.enabled = true;
         if (editMode && renderer) renderer.domElement.style.cursor = 'grab';
       } else if (tool === 'river') {
         if (terrainTools) terrainTools.style.display = 'none';
         if (trailTools) trailTools.style.display = 'none';
         if (riverTools) riverTools.style.display = 'block';
+        if (peakTools) peakTools.style.display = 'none';
         if (editCursor) editCursor.visible = false;
         selectedRiverIndex = -1;
         isDraggingRiver = false;
         pointerDownOnRiver = false;
         rebuildRiverRender();
         if (trailHandlesGroup) trailHandlesGroup.visible = false;
+        if (peakHandlesGroup) peakHandlesGroup.visible = false;
+        if (editMode && controls) controls.enabled = true;
+        if (editMode && renderer) renderer.domElement.style.cursor = 'grab';
+      } else if (tool === 'peak') {
+        if (terrainTools) terrainTools.style.display = 'none';
+        if (trailTools) trailTools.style.display = 'none';
+        if (riverTools) riverTools.style.display = 'none';
+        if (peakTools) peakTools.style.display = 'block';
+        if (editCursor) editCursor.visible = false;
+        selectedPeakIndex = -1;
+        isDraggingPeak = false;
+        pointerDownOnPeak = false;
+        hoverPeakIndex = -1;
+        hidePeakSelectionEffect();
+        rebuildPeakHandles();
+        if (trailHandlesGroup) trailHandlesGroup.visible = false;
+        if (riverHandlesGroup) riverHandlesGroup.visible = false;
         if (editMode && controls) controls.enabled = true;
         if (editMode && renderer) renderer.domElement.style.cursor = 'grab';
       } else {
         if (terrainTools) terrainTools.style.display = 'block';
         if (trailTools) trailTools.style.display = 'none';
         if (riverTools) riverTools.style.display = 'none';
+        if (peakTools) peakTools.style.display = 'none';
         selectedTrailIndex = -1;
         isDraggingTrail = false;
         pointerDownOnTrail = false;
         selectedRiverIndex = -1;
         isDraggingRiver = false;
         pointerDownOnRiver = false;
+        selectedPeakIndex = -1;
+        isDraggingPeak = false;
+        pointerDownOnPeak = false;
+        hoverPeakIndex = -1;
         rebuildTrailHandles();
         if (riverHandlesGroup) riverHandlesGroup.visible = false;
+        rebuildPeakHandles();
         if (editMode && controls) controls.enabled = false;
         if (editMode && renderer) renderer.domElement.style.cursor = 'crosshair';
         if (editCursor) { updateEditCursorScale(); editCursor.visible = true; }
@@ -4094,6 +4352,7 @@ var ThreeMap = (function() {
           else if (tool === 'lower') { b.style.background = 'rgba(80,140,220,0.4)'; b.style.borderColor = 'rgba(100,180,255,0.7)'; }
           else if (tool === 'trail') { b.style.background = 'rgba(220,180,60,0.4)'; b.style.borderColor = 'rgba(255,220,80,0.7)'; }
           else if (tool === 'river') { b.style.background = 'rgba(60,150,220,0.4)'; b.style.borderColor = 'rgba(80,180,255,0.7)'; }
+          else if (tool === 'peak') { b.style.background = 'rgba(180,80,220,0.4)'; b.style.borderColor = 'rgba(220,130,255,0.7)'; }
           else { b.style.background = 'rgba(200,180,80,0.4)'; b.style.borderColor = 'rgba(255,220,100,0.7)'; }
         } else {
           b.style.background = 'rgba(60,80,100,0.2)';
@@ -4210,7 +4469,7 @@ var ThreeMap = (function() {
       if (isDEMEdit && (editTool === 'raise' || editTool === 'lower' || editTool === 'smooth' || editTool === 'river')) {
         editTool = 'trail';
       }
-      var isPathTool = (editTool === 'trail' || editTool === 'river');
+      var isPathTool = (editTool === 'trail' || editTool === 'river' || editTool === 'peak');
       controls.enabled = isPathTool;
       if (!isPathTool) updateEditCursorScale();
       if (backButton) backButton.style.pointerEvents = 'none';
@@ -4218,16 +4477,32 @@ var ThreeMap = (function() {
       if (editTool === 'trail') {
         editCursor.visible = false;
         if (riverHandlesGroup) riverHandlesGroup.visible = false;
+        if (peakHandlesGroup) peakHandlesGroup.visible = false;
         rebuildTrailHandles();
         showEditorToast(isDEMEdit ? 'DEM真实地形 · 路径编辑：拖拽控制点移动路径' : '路径编辑：拖拽黄色控制点移动路径 · 空白区域可旋转缩放地图');
       } else if (editTool === 'river') {
         editCursor.visible = false;
         if (trailHandlesGroup) trailHandlesGroup.visible = false;
+        if (peakHandlesGroup) peakHandlesGroup.visible = false;
         rebuildRiverRender();
         showEditorToast('河流编辑：拖拽蓝色控制点改河道 · Shift+点击添加点 · 空白区域可旋转缩放地图');
+      } else if (editTool === 'peak') {
+        editCursor.visible = false;
+        if (trailHandlesGroup) trailHandlesGroup.visible = false;
+        if (riverHandlesGroup) riverHandlesGroup.visible = false;
+        hidePeakSelectionEffect();
+        if (hoverPeakIndex >= 0) { setPeakHighlight(hoverPeakIndex, false); }
+        selectedPeakIndex = -1;
+        hoverPeakIndex = -1;
+        isDraggingPeak = false;
+        pointerDownOnPeak = false;
+        rebuildPeakHandles();
+        showEditorToast('台顶编辑：鼠标悬停台顶显示光束 · 拖拽移动位置 · 空白区域可旋转缩放地图');
       } else {
         if (trailHandlesGroup) trailHandlesGroup.visible = false;
         if (riverHandlesGroup) riverHandlesGroup.visible = false;
+        hidePeakSelectionEffect();
+        if (hoverPeakIndex >= 0) { setPeakHighlight(hoverPeakIndex, false); hoverPeakIndex = -1; }
         showEditorToast('选择工具编辑地形或路径 · 右键退出编辑');
       }
     } else {
@@ -4240,6 +4515,20 @@ var ThreeMap = (function() {
       isDraggingRiver = false;
       pointerDownOnRiver = false;
       selectedRiverIndex = -1;
+      isDraggingPeak = false;
+      pointerDownOnPeak = false;
+      selectedPeakIndex = -1;
+      hoverPeakIndex = -1;
+      hidePeakSelectionEffect();
+      peakOrigEmissive.forEach(function(entries) {
+        if (!entries) return;
+        entries.forEach(function(e) {
+          if (e.mesh && e.mesh.material) {
+            e.mesh.material.emissive.setHex(e.color);
+            e.mesh.material.emissiveIntensity = e.intensity;
+          }
+        });
+      });
       controls.enabled = true;
       try { renderer.domElement.releasePointerCapture(); } catch(ex) {}
       if (editEntryBtn) editEntryBtn.style.display = 'block';
@@ -4359,6 +4648,25 @@ var ThreeMap = (function() {
       return;
     }
 
+    if (editTool === 'peak') {
+      var hitIdxP = pickPeakMesh(e.clientX, e.clientY);
+      if (hitIdxP >= 0) {
+        selectedPeakIndex = hitIdxP;
+        isDraggingPeak = true;
+        pointerDownOnPeak = true;
+        try { renderer.domElement.setPointerCapture(e.pointerId); } catch(ex) {}
+        rebuildPeakHandles();
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      } else {
+        selectedPeakIndex = -1;
+        isDraggingPeak = false;
+        pointerDownOnPeak = false;
+        rebuildPeakHandles();
+      }
+      return;
+    }
+
     isEditing = true;
     try { renderer.domElement.setPointerCapture(e.pointerId); } catch(ex) {}
     if (terrainMesh && baseHeights) {
@@ -4405,11 +4713,33 @@ var ThreeMap = (function() {
 
     if (!editMode && !poiPlacementMode) {
       var poiHit = pickPOIMarker(e.clientX, e.clientY);
-      renderer.domElement.style.cursor = poiHit ? 'pointer' : 'grab';
+      var peakHit = -1;
+      if (!poiHit) {
+        peakHit = pickPeakMesh(e.clientX, e.clientY);
+      }
+      if (peakHit !== hoverPeakIndex) {
+        if (hoverPeakIndex >= 0) setPeakHighlight(hoverPeakIndex, false);
+        hoverPeakIndex = peakHit;
+        if (hoverPeakIndex >= 0) {
+          setPeakHighlight(hoverPeakIndex, true);
+          selectedPeakIndex = hoverPeakIndex;
+          showPeakSelectionEffect(selectedPeakIndex);
+        } else {
+          selectedPeakIndex = -1;
+          hidePeakSelectionEffect();
+        }
+      }
+      renderer.domElement.style.cursor = (poiHit || peakHit >= 0) ? 'pointer' : 'grab';
       return;
     }
 
     if (editMode) {
+      if (editTool !== 'peak' && hoverPeakIndex >= 0) {
+        setPeakHighlight(hoverPeakIndex, false);
+        hoverPeakIndex = -1;
+        selectedPeakIndex = -1;
+        hidePeakSelectionEffect();
+      }
       if (editTool === 'trail') {
         if (isDraggingTrail) {
           dragTrailPoint(e.clientX, e.clientY);
@@ -4444,6 +4774,31 @@ var ThreeMap = (function() {
         if (editCursor) editCursor.visible = false;
         return;
       }
+      if (editTool === 'peak') {
+        if (isDraggingPeak) {
+          dragPeakPoint(e.clientX, e.clientY);
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          renderer.domElement.style.cursor = 'move';
+        } else {
+          var hitIdxP = pickPeakMesh(e.clientX, e.clientY);
+          if (hitIdxP !== hoverPeakIndex) {
+            if (hoverPeakIndex >= 0) setPeakHighlight(hoverPeakIndex, false);
+            hoverPeakIndex = hitIdxP;
+            if (hoverPeakIndex >= 0) {
+              setPeakHighlight(hoverPeakIndex, true);
+              selectedPeakIndex = hoverPeakIndex;
+              showPeakSelectionEffect(selectedPeakIndex);
+            } else {
+              selectedPeakIndex = -1;
+              hidePeakSelectionEffect();
+            }
+          }
+          renderer.domElement.style.cursor = hitIdxP >= 0 ? 'pointer' : 'grab';
+        }
+        if (editCursor) editCursor.visible = false;
+        return;
+      }
       var hp = updateEditCursorPosition(e.clientX, e.clientY);
       if (isEditing && hp) {
         applyBrush(hp);
@@ -4470,6 +4825,26 @@ var ThreeMap = (function() {
       e.preventDefault();
       return;
     }
+    if (isDraggingPeak) {
+      isDraggingPeak = false;
+      pointerDownOnPeak = false;
+      try { renderer.domElement.releasePointerCapture(e.pointerId); } catch(ex) {}
+      e.preventDefault();
+      var reHit = pickPeakMesh(e.clientX, e.clientY);
+      if (reHit >= 0) {
+        if (hoverPeakIndex >= 0 && hoverPeakIndex !== reHit) setPeakHighlight(hoverPeakIndex, false);
+        hoverPeakIndex = reHit;
+        selectedPeakIndex = reHit;
+        setPeakHighlight(reHit, true);
+        showPeakSelectionEffect(reHit);
+      } else {
+        if (hoverPeakIndex >= 0) setPeakHighlight(hoverPeakIndex, false);
+        hoverPeakIndex = -1;
+        selectedPeakIndex = -1;
+        hidePeakSelectionEffect();
+      }
+      return;
+    }
     if (isEditing) {
       isEditing = false;
       try { renderer.domElement.releasePointerCapture(e.pointerId); } catch(ex) {}
@@ -4479,6 +4854,7 @@ var ThreeMap = (function() {
     }
     pointerDownOnTrail = false;
     pointerDownOnRiver = false;
+    pointerDownOnPeak = false;
     if (editMode && e.button === 2) {
       toggleEditMode(false);
     }
@@ -5221,6 +5597,492 @@ var ThreeMap = (function() {
     rebuildTrailRender();
   }
 
+  function ensureWorkingPeakPositions() {
+    if (workingPeakPositions) return workingPeakPositions;
+    if (!currentMountainRoute || !currentMountainRoute.terrain) return [];
+    var peaks = currentMountainRoute.terrain.peaks || [];
+    var saved = null;
+    try {
+      var raw = localStorage.getItem(getStorageKey(currentMountainRoute.id));
+      if (raw) {
+        var data = JSON.parse(raw);
+        if (data.peakPositions) saved = data.peakPositions;
+      }
+    } catch(e) {}
+    workingPeakPositions = peaks.map(function(p, i) {
+      if (saved && saved[i]) return { x: saved[i].x, y: saved[i].y };
+      return { x: p.x, y: p.y };
+    });
+    return workingPeakPositions;
+  }
+
+  function getPeakWorldPos(pi) {
+    var peaks = currentMountainRoute.terrain.peaks;
+    var wps = ensureWorkingPeakPositions();
+    var size = getTerrainSize();
+    var px, pz;
+    if (wps[pi] && wps[pi].x !== undefined) {
+      px = (wps[pi].x - 0.5) * size;
+      pz = (wps[pi].y - 0.5) * size;
+    } else {
+      var p = peaks[pi];
+      px = (p.x - 0.5) * size;
+      pz = (p.y - 0.5) * size;
+    }
+    var py = getVertexHeightAt(px, pz);
+    return { x: px, y: py, z: pz };
+  }
+
+  function rebuildPeakMarkers() {
+    if (!mountainGroup || !currentMountainRoute || !currentMountainRoute.terrain) return;
+    var oldPeaks = [];
+    mountainGroup.traverse(function(obj) {
+      if (obj.userData && (obj.userData.isPeak || obj.userData.isPeakLabel)) {
+        oldPeaks.push(obj);
+      }
+    });
+    for (var i = 0; i < oldPeaks.length; i++) {
+      var o = oldPeaks[i];
+      if (o.parent) o.parent.remove(o);
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); }
+    }
+    peakMeshesRefs = [];
+    peakLabelRefs = [];
+    peakOrigEmissive = [];
+    var terrain = currentMountainRoute.terrain;
+    var wps = ensureWorkingPeakPositions();
+    var isWutaishan = currentMountainRoute.id === 'wutaishan';
+    var size = getTerrainSize();
+    for (var pi = 0; pi < terrain.peaks.length; pi++) {
+      var peak = terrain.peaks[pi];
+      var wp = getPeakWorldPos(pi);
+      var peakMesh;
+      var labelY;
+      if (isWutaishan) {
+        peakMesh = createPagodaMesh();
+        peakMesh.position.set(wp.x, wp.y + 0.08, wp.z);
+        labelY = wp.y + 4;
+      } else {
+        var coneGeo = new THREE.ConeGeometry(0.6, 2.0, 8);
+        var coneMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x4488ff, emissiveIntensity: 0.4, roughness: 0.3 });
+        peakMesh = new THREE.Mesh(coneGeo, coneMat);
+        peakMesh.position.set(wp.x, wp.y + 1.1, wp.z);
+        labelY = wp.y + 4.5;
+      }
+      peakMesh.userData.isPeak = true;
+      peakMesh.userData.peakName = peak.name;
+      peakMesh.userData.peakHeight = peak.height;
+      peakMesh.userData.peakIndex = pi;
+      mountainGroup.add(peakMesh);
+      peakMeshesRefs[pi] = peakMesh;
+
+      peakOrigEmissive[pi] = [];
+      peakMesh.traverse(function(child) {
+        if (child.isMesh && child.material && child.material.emissive) {
+          child.userData.peakIndex = pi;
+          child.userData.isPeak = true;
+          peakOrigEmissive[pi].push({
+            mesh: child,
+            color: child.material.emissive.getHex(),
+            intensity: child.material.emissiveIntensity
+          });
+        }
+      });
+
+      var lc = document.createElement('canvas');
+      var lctx = lc.getContext('2d');
+      lc.width = 256;
+      lc.height = 64;
+      lctx.font = 'bold 22px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif';
+      lctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+      lctx.textAlign = 'center';
+      lctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
+      lctx.shadowBlur = 6;
+      lctx.fillText(peak.name, 128, 26);
+      lctx.font = '16px -apple-system, "PingFang SC", sans-serif';
+      lctx.fillStyle = 'rgba(150, 200, 255, 0.9)';
+      var realH = Math.round(wp.y > 0 ? (terrain.baseHeight || 1000) : 0);
+      if (peak.height) realH = peak.height;
+      lctx.fillText(realH + 'm', 128, 50);
+      var lt = new THREE.CanvasTexture(lc);
+      var lm = new THREE.SpriteMaterial({ map: lt, transparent: true, depthTest: false, depthWrite: false });
+      var ls = new THREE.Sprite(lm);
+      ls.position.set(wp.x, labelY, wp.z);
+      ls.scale.set(6, 1.5, 1);
+      ls.userData.isPeakLabel = true;
+      ls.userData.peakIndex = pi;
+      mountainGroup.add(ls);
+      peakLabelRefs[pi] = ls;
+    }
+  }
+
+  function setPeakHighlight(pi, highlight) {
+    if (pi < 0 || !peakOrigEmissive[pi]) return;
+    var entries = peakOrigEmissive[pi];
+    var goldColor = new THREE.Color(0xffd700);
+    for (var i = 0; i < entries.length; i++) {
+      var e = entries[i];
+      if (!e.mesh || !e.mesh.material) continue;
+      if (highlight) {
+        e.mesh.material.emissive.copy(goldColor);
+        e.mesh.material.emissiveIntensity = 0.9;
+      } else {
+        e.mesh.material.emissive.setHex(e.color);
+        e.mesh.material.emissiveIntensity = e.intensity;
+      }
+    }
+  }
+
+  function createPeakSelectionEffect() {
+    if (peakBeamCoreMesh) return;
+    var beamH = 60;
+    var segR = 80;
+
+    var coreR = 0.05;
+    var coreGeo = new THREE.CylinderGeometry(coreR, coreR, beamH, segR, 1, true);
+    var coreMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    });
+    peakBeamCoreMesh = new THREE.Mesh(coreGeo, coreMat);
+    peakBeamCoreMesh.visible = false;
+    peakBeamCoreMesh.renderOrder = 1001;
+    scene.add(peakBeamCoreMesh);
+
+    var midR = 0.12;
+    var midGeo = new THREE.CylinderGeometry(midR, midR, beamH, segR, 1, true);
+    var midMat = new THREE.MeshBasicMaterial({
+      color: 0xffee99,
+      transparent: true,
+      opacity: 0,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    });
+    peakBeamMesh = new THREE.Mesh(midGeo, midMat);
+    peakBeamMesh.visible = false;
+    peakBeamMesh.renderOrder = 1000;
+    scene.add(peakBeamMesh);
+
+    var glowR = 0.25;
+    var glowGeo = new THREE.CylinderGeometry(glowR, glowR, beamH, segR, 1, true);
+    var glowMat = new THREE.MeshBasicMaterial({
+      color: 0xffcc44,
+      transparent: true,
+      opacity: 0,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    });
+    peakBeamGlowMesh = new THREE.Mesh(glowGeo, glowMat);
+    peakBeamGlowMesh.visible = false;
+    peakBeamGlowMesh.renderOrder = 999;
+    scene.add(peakBeamGlowMesh);
+
+    peakParticles = [];
+    var pCount = 5;
+    for (var pi = 0; pi < pCount; pi++) {
+      var pGroup = new THREE.Group();
+      var corePG = new THREE.SphereGeometry(0.06, 10, 8);
+      var corePM = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending
+      });
+      var corePMesh = new THREE.Mesh(corePG, corePM);
+      var glowPG = new THREE.SphereGeometry(0.15, 10, 8);
+      var glowPM = new THREE.MeshBasicMaterial({
+        color: 0xffdd66,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending
+      });
+      var glowPMesh = new THREE.Mesh(glowPG, glowPM);
+      pGroup.add(glowPMesh);
+      pGroup.add(corePMesh);
+      pGroup.visible = false;
+      pGroup.renderOrder = 1002;
+      pGroup.userData = {
+        coreMat: corePM,
+        glowMat: glowPM,
+        coreMesh: corePMesh,
+        glowMesh: glowPMesh,
+        slot: pi / pCount,
+        speed: 0.55 + Math.random() * 0.15,
+        xJitter: (Math.random() - 0.5) * 0.06,
+        zJitter: (Math.random() - 0.5) * 0.06,
+        fallDuration: 2.4 + Math.random() * 0.6
+      };
+      scene.add(pGroup);
+      peakParticles.push(pGroup);
+    }
+
+    var haloGeo = new THREE.RingGeometry(0.22, 0.55, segR);
+    haloGeo.rotateX(-Math.PI / 2);
+    var haloMat = new THREE.MeshBasicMaterial({
+      color: 0xffeeaa,
+      transparent: true,
+      opacity: 0,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    });
+    peakHaloMesh = new THREE.Mesh(haloGeo, haloMat);
+    peakHaloMesh.visible = false;
+    peakHaloMesh.renderOrder = 999;
+    scene.add(peakHaloMesh);
+
+    var halo2Geo = new THREE.RingGeometry(0.5, 0.95, segR);
+    halo2Geo.rotateX(-Math.PI / 2);
+    var halo2Mat = new THREE.MeshBasicMaterial({
+      color: 0xffdd66,
+      transparent: true,
+      opacity: 0,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    });
+    var peakHalo2Mesh = new THREE.Mesh(halo2Geo, halo2Mat);
+    peakHalo2Mesh.visible = false;
+    peakHalo2Mesh.renderOrder = 998;
+    scene.add(peakHalo2Mesh);
+    peakHaloMesh.userData.outerRing = peakHalo2Mesh;
+  }
+
+  function _allBeamMeshes() {
+    return [peakBeamCoreMesh, peakBeamMesh, peakBeamGlowMesh, peakHaloMesh, peakHaloMesh.userData && peakHaloMesh.userData.outerRing];
+  }
+
+  function showPeakSelectionEffect(pi) {
+    createPeakSelectionEffect();
+    if (pi < 0 || !peakMeshesRefs[pi]) {
+      hidePeakSelectionEffect();
+      return;
+    }
+    var wp = getPeakWorldPos(pi);
+    var isWutaishan = currentMountainRoute && currentMountainRoute.id === 'wutaishan';
+    var topOffset = isWutaishan ? 2.8 : 2.2;
+    var beamBaseY = wp.y + (isWutaishan ? 0.08 : 1.1);
+    var beamH = 60;
+    var beamCtrY = beamBaseY + beamH / 2;
+
+    peakBeamCoreMesh.position.set(wp.x, beamCtrY, wp.z);
+    peakBeamCoreMesh.visible = true;
+    peakBeamCoreMesh.material.opacity = 0.25;
+
+    peakBeamMesh.position.set(wp.x, beamCtrY, wp.z);
+    peakBeamMesh.visible = true;
+    peakBeamMesh.material.opacity = 0.08;
+
+    peakBeamGlowMesh.position.set(wp.x, beamCtrY, wp.z);
+    peakBeamGlowMesh.visible = true;
+    peakBeamGlowMesh.material.opacity = 0.03;
+
+    var haloY = beamBaseY + topOffset;
+    peakHaloMesh.position.set(wp.x, haloY, wp.z);
+    peakHaloMesh.visible = true;
+    peakHaloMesh.material.opacity = 0.6;
+    peakHaloMesh.scale.setScalar(1);
+
+    var outerRing = peakHaloMesh.userData.outerRing;
+    if (outerRing) {
+      outerRing.position.set(wp.x, haloY, wp.z);
+      outerRing.visible = true;
+      outerRing.material.opacity = 0.2;
+      outerRing.scale.setScalar(1);
+    }
+
+    var now = performance.now() / 1000;
+    for (var i = 0; i < peakParticles.length; i++) {
+      var p = peakParticles[i];
+      p.visible = true;
+      p.userData.cycleStart = now - p.userData.slot * 3.5;
+      p.position.set(wp.x, beamBaseY + beamH, wp.z);
+      p.scale.setScalar(1);
+      if (p.userData.coreMat) p.userData.coreMat.opacity = 0;
+      if (p.userData.glowMat) p.userData.glowMat.opacity = 0;
+    }
+  }
+
+  function hidePeakSelectionEffect() {
+    var list = [peakBeamCoreMesh, peakBeamMesh, peakBeamGlowMesh, peakHaloMesh];
+    if (peakHaloMesh && peakHaloMesh.userData && peakHaloMesh.userData.outerRing) {
+      list.push(peakHaloMesh.userData.outerRing);
+    }
+    for (var i = 0; i < list.length; i++) {
+      var m = list[i];
+      if (m) { m.visible = false; if (m.material) m.material.opacity = 0; }
+    }
+    for (var j = 0; j < peakParticles.length; j++) {
+      var p = peakParticles[j];
+      if (p) {
+        p.visible = false;
+        if (p.userData.coreMat) p.userData.coreMat.opacity = 0;
+        if (p.userData.glowMat) p.userData.glowMat.opacity = 0;
+      }
+    }
+  }
+
+  function updatePeakSelectionEffect(pi) {
+    if (pi < 0 || !peakMeshesRefs[pi] || !peakBeamCoreMesh || !peakBeamCoreMesh.visible) return;
+    var wp = getPeakWorldPos(pi);
+    var isWutaishan = currentMountainRoute && currentMountainRoute.id === 'wutaishan';
+    var beamBaseY = wp.y + (isWutaishan ? 0.08 : 1.1);
+    var beamH = 60;
+    var beamCtrY = beamBaseY + beamH / 2;
+    var topOffset = isWutaishan ? 2.8 : 2.2;
+    var targetY = beamBaseY + topOffset;
+    var startY = beamBaseY + beamH * 0.95;
+    var haloY = targetY;
+
+    peakBeamCoreMesh.position.set(wp.x, beamCtrY, wp.z);
+    peakBeamMesh.position.set(wp.x, beamCtrY, wp.z);
+    peakBeamGlowMesh.position.set(wp.x, beamCtrY, wp.z);
+    peakHaloMesh.position.set(wp.x, haloY, wp.z);
+    var outerRing = peakHaloMesh.userData.outerRing;
+    if (outerRing) outerRing.position.set(wp.x, haloY, wp.z);
+
+    var now = performance.now() / 1000;
+    var t = now * 2.5;
+    var pulse = 0.88 + 0.12 * Math.sin(t);
+    var pulse2 = 1.0 + 0.18 * Math.sin(t * 0.7);
+    peakHaloMesh.scale.setScalar(pulse);
+    if (outerRing) outerRing.scale.setScalar(pulse2);
+    peakBeamCoreMesh.material.opacity = 0.22 + 0.06 * Math.sin(t * 1.8);
+    peakBeamMesh.material.opacity = 0.06 + 0.03 * Math.sin(t * 1.3);
+    peakBeamGlowMesh.material.opacity = 0.02 + 0.015 * Math.sin(t * 0.9);
+    peakHaloMesh.material.opacity = 0.45 + 0.08 * Math.sin(t * 1.6);
+    if (outerRing) outerRing.material.opacity = 0.12 + 0.05 * Math.sin(t * 1.1);
+
+    var cycleLen = 3.5;
+    for (var i = 0; i < peakParticles.length; i++) {
+      var p = peakParticles[i];
+      if (!p.visible) continue;
+      var ud = p.userData;
+      var elapsed = now - (ud.cycleStart || now);
+      var cyc = elapsed / cycleLen;
+      var cycFloor = Math.floor(cyc);
+      var phase = cyc - cycFloor;
+      var dur = ud.fallDuration;
+      var fallStart = 0;
+      var fallEnd = dur / cycleLen;
+      var impactDur = 0.12;
+
+      var px = wp.x + ud.xJitter;
+      var pz = wp.z + ud.zJitter;
+      var coreOpa = 0;
+      var glowOpa = 0;
+      var s = 1;
+      var sy = 1;
+
+      if (phase < fallStart) {
+        p.visible = true;
+        p.position.set(px, startY, pz);
+        coreOpa = 0;
+        glowOpa = 0;
+      } else if (phase < fallEnd) {
+        var fp = (phase - fallStart) / (fallEnd - fallStart);
+        var py = startY - fp * (startY - targetY);
+        p.position.set(px, py, pz);
+        var fadeIn = Math.min(1, fp * 12);
+        var visFade = fadeIn;
+        coreOpa = 1.0 * visFade;
+        glowOpa = 0.7 * visFade;
+        s = 0.9 + 0.15 * Math.sin(now * 8 + i);
+        sy = 1.3 + 0.3 * fp;
+      } else if (phase < fallEnd + impactDur) {
+        var ip = (phase - fallEnd) / impactDur;
+        p.position.set(px, targetY, pz);
+        coreOpa = 1.0 * (1 - ip);
+        glowOpa = 0.55 * (1 - ip * 0.7);
+        s = 1.0 + ip * 2.5;
+        sy = 1.0;
+      } else {
+        p.position.set(px, startY, pz);
+        coreOpa = 0;
+        glowOpa = 0;
+        s = 0;
+      }
+
+      p.scale.set(s, sy * s, s);
+      if (ud.coreMat) ud.coreMat.opacity = coreOpa;
+      if (ud.glowMat) ud.glowMat.opacity = glowOpa;
+    }
+  }
+
+  function updatePeakPosition(pi) {
+    if (pi < 0) return;
+    var wp = getPeakWorldPos(pi);
+    var mesh = peakMeshesRefs[pi];
+    var label = peakLabelRefs[pi];
+    var isWutaishan = currentMountainRoute && currentMountainRoute.id === 'wutaishan';
+    if (mesh) {
+      if (isWutaishan) {
+        mesh.position.set(wp.x, wp.y + 0.08, wp.z);
+      } else {
+        mesh.position.set(wp.x, wp.y + 1.1, wp.z);
+      }
+    }
+    if (label) {
+      label.position.set(wp.x, wp.y + (isWutaishan ? 4 : 4.5), wp.z);
+    }
+  }
+
+  function rebuildPeakHandles() {
+    var inPeakMode = (editMode && editTool === 'peak' && viewMode === 'mountain');
+    if (!inPeakMode) {
+      hidePeakSelectionEffect();
+      if (hoverPeakIndex >= 0) {
+        setPeakHighlight(hoverPeakIndex, false);
+        hoverPeakIndex = -1;
+      }
+      renderer.domElement.style.cursor = 'grab';
+      return;
+    }
+    if (selectedPeakIndex >= 0) {
+      showPeakSelectionEffect(selectedPeakIndex);
+    } else {
+      hidePeakSelectionEffect();
+    }
+  }
+
+  function pickPeakMesh(clientX, clientY) {
+    if (!mountainGroup) return -1;
+    var rect = renderer.domElement.getBoundingClientRect();
+    editMouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    editMouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    editRaycaster.setFromCamera(editMouse, camera);
+    var peakMeshes = [];
+    mountainGroup.traverse(function(obj) {
+      if (obj.isMesh && obj.userData && obj.userData.isPeak && obj.userData.peakIndex !== undefined) {
+        peakMeshes.push(obj);
+      }
+    });
+    var hits = editRaycaster.intersectObjects(peakMeshes, false);
+    if (hits.length > 0) return hits[0].object.userData.peakIndex;
+    return -1;
+  }
+
+  function dragPeakPoint(clientX, clientY) {
+    if (selectedPeakIndex < 0) return;
+    var hit = getTerrainHitPoint(clientX, clientY);
+    if (!hit) return;
+    var uv = worldToUV(hit.x, hit.z);
+    var wps = ensureWorkingPeakPositions();
+    wps[selectedPeakIndex].x = uv.x;
+    wps[selectedPeakIndex].y = uv.y;
+    updatePeakPosition(selectedPeakIndex);
+    updatePeakSelectionEffect(selectedPeakIndex);
+  }
+
   function addTrailPoint(clientX, clientY) {
     var hit = getTerrainHitPoint(clientX, clientY);
     if (!hit) return;
@@ -5703,6 +6565,12 @@ var ThreeMap = (function() {
     isDraggingRiver = false;
     pointerDownOnRiver = false;
     workingCustomTrails = null;
+    workingPeakPositions = null;
+    selectedPeakIndex = -1;
+    hoverPeakIndex = -1;
+    isDraggingPeak = false;
+    pointerDownOnPeak = false;
+    hidePeakSelectionEffect();
     activeTrailId = null;
     trailDirectionOverrides = {};
     trailCompletedStatus = {};
