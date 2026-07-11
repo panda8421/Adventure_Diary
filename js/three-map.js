@@ -3747,7 +3747,10 @@ var ThreeMap = (function() {
     for (var i = 0; i < positions.count; i++) {
       deltas[i] = baseHeights[i] - origHeights[i];
     }
-    var data = { segments: segments, deltas: deltas };
+    var prev = null;
+    try { var raw = localStorage.getItem(getStorageKey(currentMountainRoute.id)); if (raw) prev = JSON.parse(raw); } catch(e) {}
+    var data = { segments: segments, deltas: deltas, localModified: Date.now() };
+    if (prev && prev.lastSync) data.lastSync = prev.lastSync;
     try {
       localStorage.setItem(getStorageKey(currentMountainRoute.id), JSON.stringify(data));
       if (typeof SyncModule !== 'undefined' && SyncModule.markDirty) SyncModule.markDirty('terrainMods');
@@ -3792,7 +3795,10 @@ var ThreeMap = (function() {
 
   function saveAllMods() {
     if (!currentMountainRoute) return;
-    var data = {};
+    var prev = null;
+    try { var raw = localStorage.getItem(getStorageKey(currentMountainRoute.id)); if (raw) prev = JSON.parse(raw); } catch(e) {}
+    var data = { localModified: Date.now() };
+    if (prev && prev.lastSync) data.lastSync = prev.lastSync;
     if (terrainMesh && origHeights) {
       var positions = terrainMesh.geometry.attributes.position;
       var segments = terrainMesh.userData.segments;
@@ -6795,6 +6801,92 @@ var ThreeMap = (function() {
     }
   }
 
+  function reloadCloudData() {
+    if (viewMode !== 'mountain' || !currentMountainRoute) return;
+    var routeId = currentMountainRoute.id;
+    var isDEM = currentMountainRoute.terrain && currentMountainRoute.terrain.useRealisticTerrain;
+
+    var savedMod = loadAllTerrainMod(routeId);
+    trailDirectionOverrides = {};
+    trailCompletedStatus = {};
+    trailNameOverrides = {};
+    deletedDefaultTrailIds = {};
+    workingRiverPoints = null;
+    workingCustomTrails = null;
+    workingPeakPositions = null;
+    riverWidth = 2.5;
+    riverDepth = 1.5;
+    hidePeakSelectionEffect();
+    if (hoverPeakIndex >= 0) { setPeakHighlight(hoverPeakIndex, false); hoverPeakIndex = -1; }
+    selectedPeakIndex = -1;
+
+    if (savedMod) {
+      if (savedMod.riverPoints && savedMod.riverPoints.length >= 2) {
+        workingRiverPoints = savedMod.riverPoints.map(function(p) {
+          if (isDEM && p.lng !== undefined && p.lat !== undefined && typeof dem !== 'undefined' && dem) {
+            var pn = lngLatToNormalizedXY(p.lng, p.lat, dem);
+            return { x: pn.x, y: pn.y };
+          }
+          return { x: p.x, y: p.y };
+        });
+      }
+      if (savedMod.riverWidth !== undefined) riverWidth = savedMod.riverWidth;
+      if (savedMod.riverDepth !== undefined) riverDepth = savedMod.riverDepth;
+      if (savedMod.customTrails) {
+        workingCustomTrails = savedMod.customTrails.map(function(t) {
+          return { id: t.id, name: t.name, direction: t.direction || 1, points: (t.points || []).map(function(p) {
+            if (isDEM && p.lng !== undefined && p.lat !== undefined && typeof dem !== 'undefined' && dem) {
+              var pn = lngLatToNormalizedXY(p.lng, p.lat, dem);
+              return { x: pn.x, y: pn.y, name: p.name };
+            }
+            return { x: p.x, y: p.y, name: p.name };
+          }) };
+        });
+      }
+      if (savedMod.activeTrailId) activeTrailId = savedMod.activeTrailId;
+      if (savedMod.trailDirectionOverrides) trailDirectionOverrides = JSON.parse(JSON.stringify(savedMod.trailDirectionOverrides));
+      if (savedMod.trailCompletedStatus) trailCompletedStatus = JSON.parse(JSON.stringify(savedMod.trailCompletedStatus));
+      if (savedMod.trailNameOverrides) trailNameOverrides = JSON.parse(JSON.stringify(savedMod.trailNameOverrides));
+      if (savedMod.deletedDefaultTrailIds) deletedDefaultTrailIds = JSON.parse(JSON.stringify(savedMod.deletedDefaultTrailIds));
+      if (savedMod.peakPositions && savedMod.peakPositions.length > 0) {
+        workingPeakPositions = savedMod.peakPositions.map(function(p) { return { x: p.x, y: p.y }; });
+      }
+      if (terrainMesh && origHeights && savedMod.deltas && savedMod.segments) {
+        var positions = terrainMesh.geometry.attributes.position;
+        for (var i = 0; i < positions.count && i < origHeights.length; i++) {
+          var dy = (i < savedMod.deltas.length) ? savedMod.deltas[i] : 0;
+          baseHeights[i] = origHeights[i] + dy;
+          positions.setY(i, baseHeights[i]);
+        }
+        positions.needsUpdate = true;
+        terrainMesh.geometry.computeVertexNormals();
+        updateTerrainColors();
+      }
+    } else {
+      if (terrainMesh && origHeights) {
+        var positions2 = terrainMesh.geometry.attributes.position;
+        for (var j = 0; j < positions2.count && j < origHeights.length; j++) {
+          baseHeights[j] = origHeights[j];
+          positions2.setY(j, origHeights[j]);
+        }
+        positions2.needsUpdate = true;
+        terrainMesh.geometry.computeVertexNormals();
+        updateTerrainColors();
+      }
+    }
+
+    initActiveTrail();
+    rebuildTrailsAndMarks();
+    rebuildRiverRender();
+    if (workingPeakPositions) {
+      rebuildPeakMarkers();
+    }
+    rebuildPOIMarkers();
+    rebuildTrailHandles();
+    rebuildPeakHandles();
+    if (typeof RouteModule !== 'undefined' && RouteModule.refreshTrailSelector) RouteModule.refreshTrailSelector();
+  }
+
   return {
     init: init,
     addMarkers: addMarkers,
@@ -6818,6 +6910,7 @@ var ThreeMap = (function() {
     setOnTrailChangedCallback: setOnTrailChangedCallback,
     exportAllRouteData: exportAllRouteData,
     importRouteData: importRouteData,
-    refreshPOIs: function() { if (viewMode === 'mountain') rebuildPOIMarkers(); }
+    refreshPOIs: function() { if (viewMode === 'mountain') rebuildPOIMarkers(); },
+    reloadCloudData: reloadCloudData
   };
 })();

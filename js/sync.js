@@ -6,6 +6,10 @@ var SyncModule = (function() {
   var SYNC_CONFIG_KEY = 'adventure_diary_sync_config';
   var LAST_SYNC_TIME_KEY = 'adventure_diary_last_sync';
   var DIRTY_KEY = 'adventure_dirty_flags';
+  var STATS_KEY = 'adventure_diary_route_stats';
+  var RATINGS_KEY = 'adventure_diary_route_ratings';
+  var POIS_KEY = 'taillog_poi_markers';
+  var TERRAIN_PREFIX = 'taillog_terrain_mod_';
 
   var config = { workerUrl: '', syncKey: '' };
   var dirtyFlags = {};
@@ -49,69 +53,126 @@ var SyncModule = (function() {
 
   function collectAll() {
     var d = { version: 1, timestamp: Date.now(), routeStats: {}, routeRatings: {}, terrainMods: {}, pois: {} };
-    try { var s = localStorage.getItem('adventure_diary_route_stats'); if (s) d.routeStats = JSON.parse(s) || {}; } catch(e) {}
-    try { var r = localStorage.getItem('adventure_diary_route_ratings'); if (r) d.routeRatings = JSON.parse(r) || {}; } catch(e) {}
-    var prefix = 'taillog_terrain_mod_';
+    try { var s = localStorage.getItem(STATS_KEY); if (s) d.routeStats = JSON.parse(s) || {}; } catch(e) {}
+    try { var r = localStorage.getItem(RATINGS_KEY); if (r) d.routeRatings = JSON.parse(r) || {}; } catch(e) {}
     try {
       for (var i = 0; i < localStorage.length; i++) {
         var key = localStorage.key(i);
-        if (key && key.indexOf(prefix) === 0) {
-          var rid = key.substring(prefix.length);
+        if (key && key.indexOf(TERRAIN_PREFIX) === 0) {
+          var rid = key.substring(TERRAIN_PREFIX.length);
           try { var m = localStorage.getItem(key); if (m) d.terrainMods[rid] = JSON.parse(m); } catch(e) {}
         }
       }
     } catch(e) {}
-    try { var p = localStorage.getItem('taillog_poi_markers'); if (p) d.pois = JSON.parse(p) || {}; } catch(e) {}
+    try { var p = localStorage.getItem(POIS_KEY); if (p) d.pois = JSON.parse(p) || {}; } catch(e) {}
     return d;
+  }
+
+  function mergeRouteData(cloudData, localData) {
+    if (!cloudData) return localData || {};
+    if (!localData) return cloudData || {};
+    var merged = {};
+    for (var k in cloudData) { if (cloudData.hasOwnProperty(k)) merged[k] = cloudData[k]; }
+    for (var k2 in localData) {
+      if (!localData.hasOwnProperty(k2)) continue;
+      if (typeof localData[k2] === 'object' && localData[k2] !== null && typeof merged[k2] === 'object' && merged[k2] !== null) {
+        merged[k2] = Object.assign({}, merged[k2], localData[k2]);
+      } else {
+        merged[k2] = localData[k2];
+      }
+    }
+    return merged;
   }
 
   function applyCloud(cloud) {
     if (!cloud) return;
+    var cloudTime = cloud.timestamp || 0;
+
     if (cloud.routeStats) {
       try {
-        var ls = {}; try { ls = JSON.parse(localStorage.getItem('adventure_diary_route_stats')) || {}; } catch(e) {}
-        localStorage.setItem('adventure_diary_route_stats', JSON.stringify(Object.assign({}, cloud.routeStats, ls)));
+        var ls = {}; try { ls = JSON.parse(localStorage.getItem(STATS_KEY)) || {}; } catch(e) {}
+        var merged = mergeRouteData(cloud.routeStats, ls);
+        localStorage.setItem(STATS_KEY, JSON.stringify(merged));
       } catch(e) {}
     }
     if (cloud.routeRatings) {
       try {
-        var lr = {}; try { lr = JSON.parse(localStorage.getItem('adventure_diary_route_ratings')) || {}; } catch(e) {}
-        localStorage.setItem('adventure_diary_route_ratings', JSON.stringify(Object.assign({}, cloud.routeRatings, lr)));
+        var lr = {}; try { lr = JSON.parse(localStorage.getItem(RATINGS_KEY)) || {}; } catch(e) {}
+        var mergedR = mergeRouteData(cloud.routeRatings, lr);
+        localStorage.setItem(RATINGS_KEY, JSON.stringify(mergedR));
       } catch(e) {}
     }
     if (cloud.terrainMods) {
-      var p = 'taillog_terrain_mod_';
       for (var rid in cloud.terrainMods) {
         if (!cloud.terrainMods.hasOwnProperty(rid)) continue;
         try {
-          var k = p + rid, lm = null;
+          var k = TERRAIN_PREFIX + rid;
+          var lm = null;
           try { var raw = localStorage.getItem(k); if (raw) lm = JSON.parse(raw); } catch(e) {}
-          if (!lm || (cloud.timestamp && (!lm.lastSync || cloud.timestamp > lm.lastSync))) {
-            localStorage.setItem(k, JSON.stringify(Object.assign({}, cloud.terrainMods[rid], { lastSync: cloud.timestamp })));
+          var cloudMod = cloud.terrainMods[rid];
+          var shouldUseCloud = false;
+
+          if (!lm) {
+            shouldUseCloud = true;
+          } else {
+            var localModTime = lm.localModified || 0;
+            var localLastSync = lm.lastSync || 0;
+            if (dirtyFlags.terrainMods && localModTime > cloudTime) {
+              shouldUseCloud = false;
+            } else if (cloudTime > localLastSync) {
+              shouldUseCloud = true;
+            }
+          }
+
+          if (shouldUseCloud) {
+            var newMod = Object.assign({}, cloudMod);
+            if (lm && lm.localModified && lm.localModified > (cloudMod.localModified || 0)) {
+              newMod.localModified = lm.localModified;
+            }
+            newMod.lastSync = cloudTime;
+            localStorage.setItem(k, JSON.stringify(newMod));
           }
         } catch(e) {}
       }
     }
     if (cloud.pois) {
       try {
-        var lp = {}; try { lp = JSON.parse(localStorage.getItem('taillog_poi_markers')) || {}; } catch(e) {}
-        var merged = {};
+        var lp = {}; try { lp = JSON.parse(localStorage.getItem(POIS_KEY)) || {}; } catch(e) {}
+        var mergedP = {};
         for (var rid2 in cloud.pois) {
           if (!cloud.pois.hasOwnProperty(rid2)) continue;
-          merged[rid2] = cloud.pois[rid2] || [];
+          mergedP[rid2] = (cloud.pois[rid2] || []).slice();
         }
         for (var rid3 in lp) {
           if (!lp.hasOwnProperty(rid3)) continue;
-          if (!merged[rid3]) merged[rid3] = [];
+          if (!mergedP[rid3]) mergedP[rid3] = [];
           var cloudIds = {};
           for (var ci = 0; ci < (cloud.pois[rid3] || []).length; ci++) { cloudIds[(cloud.pois[rid3] || [])[ci].id] = true; }
           for (var li = 0; li < lp[rid3].length; li++) {
-            if (!cloudIds[lp[rid3][li].id]) merged[rid3].push(lp[rid3][li]);
+            if (!cloudIds[lp[rid3][li].id]) mergedP[rid3].push(lp[rid3][li]);
           }
         }
-        localStorage.setItem('taillog_poi_markers', JSON.stringify(merged));
+        localStorage.setItem(POIS_KEY, JSON.stringify(mergedP));
       } catch(e) {}
     }
+  }
+
+  function updateLocalLastSync(syncTime) {
+    try {
+      for (var i = 0; i < localStorage.length; i++) {
+        var key = localStorage.key(i);
+        if (key && key.indexOf(TERRAIN_PREFIX) === 0) {
+          try {
+            var raw = localStorage.getItem(key);
+            if (raw) {
+              var d = JSON.parse(raw);
+              d.lastSync = syncTime;
+              localStorage.setItem(key, JSON.stringify(d));
+            }
+          } catch(e) {}
+        }
+      }
+    } catch(e) {}
   }
 
   function toast(msg, err) {
@@ -141,6 +202,14 @@ var SyncModule = (function() {
     return url.replace(/\/$/, '');
   }
 
+  function refreshAfterSync() {
+    try {
+      if (typeof ThreeMap !== 'undefined' && ThreeMap.refreshPOIs) ThreeMap.refreshPOIs();
+      if (typeof ThreeMap !== 'undefined' && ThreeMap.reloadCloudData) ThreeMap.reloadCloudData();
+      if (typeof RouteModule !== 'undefined' && RouteModule.refreshTrailSelector) RouteModule.refreshTrailSelector();
+    } catch(e) {}
+  }
+
   async function pull(showMsg) {
     if (!config.workerUrl) return { success: false, error: '未配置' };
     try {
@@ -151,10 +220,9 @@ var SyncModule = (function() {
       if (res.success && res.data) {
         applyCloud(res.data);
         try { localStorage.setItem(LAST_SYNC_TIME_KEY, Date.now().toString()); } catch(e) {}
-        if (typeof ThreeMap !== 'undefined' && ThreeMap.refreshPOIs) ThreeMap.refreshPOIs();
-        if (typeof RouteModule !== 'undefined' && RouteModule.refreshTrailSelector) RouteModule.refreshTrailSelector();
+        refreshAfterSync();
         if (showMsg) toast('☁️ 已从云端同步最新数据');
-        return { success: true };
+        return { success: true, data: res.data };
       } else if (res.success && !res.data) {
         if (showMsg) toast('☁️ 云端暂无数据');
         return { success: true, data: null };
@@ -178,6 +246,7 @@ var SyncModule = (function() {
       });
       var res = await resp.json();
       if (res.success) {
+        updateLocalLastSync(data.timestamp);
         clearDirty();
         try { localStorage.setItem(LAST_SYNC_TIME_KEY, Date.now().toString()); } catch(e) {}
         if (showMsg) toast('✅ 已同步到云端');
@@ -192,8 +261,8 @@ var SyncModule = (function() {
   async function doSync() {
     var btn = document.getElementById('sync-cloud-btn');
     if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; btn.innerHTML = '<span style="animation:spin 1s linear infinite;display:inline-block;">⏳</span>'; }
-    await pull(true);
-    if (typeof RouteModule !== 'undefined' && RouteModule.refreshTrailSelector) RouteModule.refreshTrailSelector();
+    var pullRes = await pull(false);
+    refreshAfterSync();
     await push(true);
     if (btn) { btn.disabled = false; btn.style.opacity = '1'; btn.innerHTML = '☁️'; }
     updateBtn();
@@ -241,9 +310,7 @@ var SyncModule = (function() {
       config.workerUrl = document.getElementById('sync-worker-url').value.trim();
       config.syncKey = document.getElementById('sync-key-input').value.trim();
       saveConfig(); closeConfig();
-      if (config.workerUrl) pull(true).then(function(){
-        if (typeof RouteModule !== 'undefined' && RouteModule.refreshTrailSelector) RouteModule.refreshTrailSelector();
-      });
+      if (config.workerUrl) pull(true).then(refreshAfterSync);
     });
     setTimeout(function(){ var el = document.getElementById('sync-worker-url'); if(el) el.focus(); }, 100);
   }
@@ -264,8 +331,8 @@ var SyncModule = (function() {
     }
     updateBtn();
     if (config.workerUrl) {
-      pull(false).then(function(){
-        if (typeof RouteModule !== 'undefined' && RouteModule.refreshTrailSelector) RouteModule.refreshTrailSelector();
+      pull(false).then(function() {
+        refreshAfterSync();
       });
     }
   }
