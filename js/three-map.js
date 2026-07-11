@@ -2328,8 +2328,9 @@ var ThreeMap = (function() {
     }
     var icon = new THREE.Mesh(iconGeo, iconMat);
     if (isFlagType) {
-      icon.position.y = 1.28;
-      icon.position.x = 0.07;
+      icon.position.y = 1.18;
+      icon.position.x = 0.04;
+      icon.renderOrder = 999;
     } else {
       icon.position.y = 0.95;
     }
@@ -4873,7 +4874,7 @@ var ThreeMap = (function() {
           var wp = new THREE.Vector3();
           hoverPOIMarker.getWorldPosition(wp);
           var isFlagType2 = (pdef.shape === 'flag' || pdef.shape === 'checkered');
-          var topOff = isFlagType2 ? 1.9 : 1.0;
+          var topOff = isFlagType2 ? 1.8 : 1.0;
           showBeamEffectAt(wp, topOff, wp.y, beamColorConfig);
         } else if (peakHit < 0) {
           hidePeakSelectionEffect();
