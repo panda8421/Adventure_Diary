@@ -2200,6 +2200,9 @@ var ThreeMap = (function() {
     var typeDef = POI_TYPES[poi.type] || POI_TYPES.note;
     var group = new THREE.Group();
 
+    var surfaceGroup = new THREE.Group();
+    surfaceGroup.userData.isPOISurface = true;
+
     var baseGeo = new THREE.CylinderGeometry(0.3, 0.4, 0.12, 12);
     var baseMat = new THREE.MeshStandardMaterial({
       color: typeDef.color,
@@ -2210,7 +2213,36 @@ var ThreeMap = (function() {
     });
     var base = new THREE.Mesh(baseGeo, baseMat);
     base.position.y = 0.06;
-    group.add(base);
+    surfaceGroup.add(base);
+
+    var ringGeo = new THREE.RingGeometry(0.55, 0.7, 24);
+    ringGeo.rotateX(-Math.PI / 2);
+    var ringMat = new THREE.MeshBasicMaterial({
+      color: typeDef.color,
+      transparent: true,
+      opacity: 0.5,
+      side: THREE.DoubleSide,
+      depthWrite: false
+    });
+    var ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.position.y = 0.02;
+    surfaceGroup.add(ring);
+
+    var pulseGeo = new THREE.RingGeometry(0.7, 0.9, 32);
+    pulseGeo.rotateX(-Math.PI / 2);
+    var pulseMat = new THREE.MeshBasicMaterial({
+      color: typeDef.color,
+      transparent: true,
+      opacity: 0,
+      side: THREE.DoubleSide,
+      depthWrite: false
+    });
+    var pulse = new THREE.Mesh(pulseGeo, pulseMat);
+    pulse.position.y = 0.03;
+    pulse.userData.isPulse = true;
+    surfaceGroup.add(pulse);
+
+    group.add(surfaceGroup);
 
     var stemGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.6, 6);
     var stemMat = new THREE.MeshStandardMaterial({
@@ -2265,19 +2297,6 @@ var ThreeMap = (function() {
     if (typeDef.shape === 'tent') icon.rotation.y = Math.PI / 4;
     group.add(icon);
 
-    var ringGeo = new THREE.RingGeometry(0.55, 0.7, 24);
-    ringGeo.rotateX(-Math.PI / 2);
-    var ringMat = new THREE.MeshBasicMaterial({
-      color: typeDef.color,
-      transparent: true,
-      opacity: 0.5,
-      side: THREE.DoubleSide,
-      depthWrite: false
-    });
-    var ring = new THREE.Mesh(ringGeo, ringMat);
-    ring.position.y = 0.02;
-    group.add(ring);
-
     if (poi.name) {
       var lc = document.createElement('canvas');
       var lctx = lc.getContext('2d');
@@ -2309,21 +2328,6 @@ var ThreeMap = (function() {
       group.add(ls);
     }
 
-    var colHex = typeDef.color;
-    var pulseGeo = new THREE.RingGeometry(0.7, 0.9, 32);
-    pulseGeo.rotateX(-Math.PI / 2);
-    var pulseMat = new THREE.MeshBasicMaterial({
-      color: colHex,
-      transparent: true,
-      opacity: 0,
-      side: THREE.DoubleSide,
-      depthWrite: false
-    });
-    var pulse = new THREE.Mesh(pulseGeo, pulseMat);
-    pulse.position.y = 0.03;
-    pulse.userData.isPulse = true;
-    group.add(pulse);
-
     group.userData.isPOI = true;
     group.userData.poiId = poi.id;
     group.userData.poiData = poi;
@@ -2343,6 +2347,43 @@ var ThreeMap = (function() {
       return getRealisticHeightAt(nx, nz, terrainResult);
     }
     return getVertexHeightAt((nx - 0.5) * (terrainMesh.userData.size || 60), (nz - 0.5) * (terrainMesh.userData.size || 60));
+  }
+
+  function getTerrainNormalAtUV(nx, nz) {
+    var eps = 0.003;
+    var size = terrainMesh ? (terrainMesh.userData.size || 60) : 60;
+    var hL = getTerrainHeightAtUV(Math.max(0, nx - eps), nz);
+    var hR = getTerrainHeightAtUV(Math.min(1, nx + eps), nz);
+    var hD = getTerrainHeightAtUV(nx, Math.max(0, nz - eps));
+    var hU = getTerrainHeightAtUV(nx, Math.min(1, nz + eps));
+    var dx = (hR - hL) / (2 * eps * size);
+    var dz = (hU - hD) / (2 * eps * size);
+    var normal = new THREE.Vector3(-dx, 1, -dz).normalize();
+    return normal;
+  }
+
+  function alignObjectToTerrain(obj, nx, nz, wx, wy, wz) {
+    var normal = getTerrainNormalAtUV(nx, nz);
+    var quat = new THREE.Quaternion();
+    quat.setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
+    obj.quaternion.copy(quat);
+    obj.position.set(wx, wy, wz);
+  }
+
+  function alignPOIToTerrain(marker, nx, nz) {
+    var terrainSize = terrainMesh ? terrainMesh.userData.size : 60;
+    var wx = (nx - 0.5) * terrainSize;
+    var wz = (nz - 0.5) * terrainSize;
+    var wy = getTerrainHeightAtUV(nx, nz);
+    marker.position.set(wx, wy + POI_Y_OFFSET, wz);
+    marker.traverse(function(obj) {
+      if (obj.userData && obj.userData.isPOISurface) {
+        var normal = getTerrainNormalAtUV(nx, nz);
+        var quat = new THREE.Quaternion();
+        quat.setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
+        obj.quaternion.copy(quat);
+      }
+    });
   }
 
   function rebuildPOIMarkers() {
@@ -2365,10 +2406,7 @@ var ThreeMap = (function() {
     for (var i = 0; i < pois.length; i++) {
       var poi = pois[i];
       var marker = createPOIMarker3D(poi);
-      var wx = (poi.x - 0.5) * terrainSize;
-      var wz = (poi.y - 0.5) * terrainSize;
-      var wy = getTerrainHeightAtUV(poi.x, poi.y);
-      marker.position.set(wx, wy + POI_Y_OFFSET, wz);
+      alignPOIToTerrain(marker, poi.x, poi.y);
       poiGroup.add(marker);
     }
     mountainGroup.add(poiGroup);
@@ -2461,11 +2499,7 @@ var ThreeMap = (function() {
         if (poiPreviewMarker && isNew) {
           createPOIPreviewMarker(newType);
           poiPreviewMarker.visible = true;
-          var terrainSize = terrainMesh ? terrainMesh.userData.size : 60;
-          var wx = (poi.x - 0.5) * terrainSize;
-          var wz = (poi.y - 0.5) * terrainSize;
-          var wy = getTerrainHeightAtUV(poi.x, poi.y);
-          poiPreviewMarker.position.set(wx, wy + POI_Y_OFFSET, wz);
+          alignPOIToTerrain(poiPreviewMarker, poi.x, poi.y);
         }
       });
     });
@@ -4751,7 +4785,7 @@ var ThreeMap = (function() {
       var hit = pickTerrainPoint(e.clientX, e.clientY);
       if (hit && poiPreviewMarker) {
         poiPreviewMarker.visible = true;
-        poiPreviewMarker.position.set(hit.x, hit.y + POI_Y_OFFSET, hit.z);
+        alignPOIToTerrain(poiPreviewMarker, hit.nx, hit.nz);
       } else if (poiPreviewMarker) {
         poiPreviewMarker.visible = false;
       }
