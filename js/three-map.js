@@ -88,6 +88,8 @@ var ThreeMap = (function() {
     junction:{ name: '岔路口',   icon: '🔀', color: 0xffaa33, emissive: 0xcc7711, shape: 'fork' },
     exit:    { name: '下撤点',   icon: '🚪', color: 0x44ddff, emissive: 0x2299bb, shape: 'door' },
     supply:  { name: '补给点',   icon: '🍜', color: 0xffdd44, emissive: 0xcc9900, shape: 'box' },
+    start:   { name: '起点',     icon: '🚩', color: 0x44dd66, emissive: 0x229933, shape: 'flag' },
+    end:     { name: '终点',     icon: '🏁', color: 0xff5533, emissive: 0xcc2211, shape: 'checkered' },
     note:    { name: '备注',     icon: '📝', color: 0xaaaabb, emissive: 0x666677, shape: 'note' }
   };
   var poiGroup = null;
@@ -2176,6 +2178,17 @@ var ThreeMap = (function() {
         return new THREE.BoxGeometry(0.5, 0.8, 0.15);
       case 'box':
         return new THREE.BoxGeometry(0.55, 0.55, 0.55);
+      case 'flag':
+      case 'checkered': {
+        var flagShape = new THREE.Shape();
+        flagShape.moveTo(0, 0);
+        flagShape.lineTo(0, 0.7);
+        flagShape.lineTo(0.75, 0.55);
+        flagShape.lineTo(0, 0.4);
+        flagShape.lineTo(0, 0);
+        var flagGeo = new THREE.ShapeGeometry(flagShape);
+        return flagGeo;
+      }
       case 'note':
       default:
         return new THREE.CylinderGeometry(0.3, 0.3, 0.08, 16);
@@ -2210,15 +2223,43 @@ var ThreeMap = (function() {
     group.add(stem);
 
     var iconGeo = createPOIMarkerGeometry(typeDef.shape);
-    var iconMat = new THREE.MeshStandardMaterial({
-      color: typeDef.color,
-      emissive: typeDef.emissive,
-      emissiveIntensity: 0.8,
-      roughness: 0.3,
-      metalness: 0.3
-    });
+    var iconMat;
+    if (typeDef.shape === 'checkered') {
+      var texCanvas = document.createElement('canvas');
+      texCanvas.width = 64; texCanvas.height = 48;
+      var tctx = texCanvas.getContext('2d');
+      var cellW = 16, cellH = 12;
+      for (var cy = 0; cy < 4; cy++) {
+        for (var cx = 0; cx < 4; cx++) {
+          tctx.fillStyle = ((cx + cy) % 2 === 0) ? '#ffffff' : '#222222';
+          tctx.fillRect(cx * cellW, cy * cellH, cellW, cellH);
+        }
+      }
+      var flagTex = new THREE.CanvasTexture(texCanvas);
+      flagTex.magFilter = THREE.NearestFilter;
+      iconMat = new THREE.MeshStandardMaterial({
+        map: flagTex,
+        color: 0xffffff,
+        emissive: 0xff5533,
+        emissiveIntensity: 0.4,
+        emissiveMap: flagTex,
+        roughness: 0.5,
+        metalness: 0.1,
+        side: THREE.DoubleSide
+      });
+    } else {
+      iconMat = new THREE.MeshStandardMaterial({
+        color: typeDef.color,
+        emissive: typeDef.emissive,
+        emissiveIntensity: 0.8,
+        roughness: 0.3,
+        metalness: 0.3,
+        side: typeDef.shape === 'flag' || typeDef.shape === 'warning' ? THREE.DoubleSide : THREE.FrontSide
+      });
+    }
     var icon = new THREE.Mesh(iconGeo, iconMat);
-    icon.position.y = 0.95;
+    icon.position.y = typeDef.shape === 'flag' || typeDef.shape === 'checkered' ? 0.72 : 0.95;
+    if (typeDef.shape === 'flag' || typeDef.shape === 'checkered') icon.position.x = 0.06;
     if (typeDef.shape === 'warning') icon.rotation.x = 0;
     if (typeDef.shape === 'tent') icon.rotation.y = Math.PI / 4;
     group.add(icon);
