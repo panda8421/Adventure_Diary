@@ -99,6 +99,7 @@ var ThreeMap = (function() {
   var poiPreviewMarker = null;
   var poiEditPanel = null;
   var selectedPOI = null;
+  var POI_Y_OFFSET = 0.12;
 
   // 配置
   var CONFIG = {
@@ -2367,7 +2368,7 @@ var ThreeMap = (function() {
       var wx = (poi.x - 0.5) * terrainSize;
       var wz = (poi.y - 0.5) * terrainSize;
       var wy = getTerrainHeightAtUV(poi.x, poi.y);
-      marker.position.set(wx, wy, wz);
+      marker.position.set(wx, wy + POI_Y_OFFSET, wz);
       poiGroup.add(marker);
     }
     mountainGroup.add(poiGroup);
@@ -2464,7 +2465,7 @@ var ThreeMap = (function() {
           var wx = (poi.x - 0.5) * terrainSize;
           var wz = (poi.y - 0.5) * terrainSize;
           var wy = getTerrainHeightAtUV(poi.x, poi.y);
-          poiPreviewMarker.position.set(wx, wy, wz);
+          poiPreviewMarker.position.set(wx, wy + POI_Y_OFFSET, wz);
         }
       });
     });
@@ -4750,7 +4751,7 @@ var ThreeMap = (function() {
       var hit = pickTerrainPoint(e.clientX, e.clientY);
       if (hit && poiPreviewMarker) {
         poiPreviewMarker.visible = true;
-        poiPreviewMarker.position.set(hit.x, hit.y, hit.z);
+        poiPreviewMarker.position.set(hit.x, hit.y + POI_Y_OFFSET, hit.z);
       } else if (poiPreviewMarker) {
         poiPreviewMarker.visible = false;
       }
