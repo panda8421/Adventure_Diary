@@ -2189,9 +2189,9 @@ var ThreeMap = (function() {
       case 'checkered': {
         var flagShape = new THREE.Shape();
         flagShape.moveTo(0, 0);
-        flagShape.lineTo(0, 0.7);
-        flagShape.lineTo(0.75, 0.55);
-        flagShape.lineTo(0, 0.4);
+        flagShape.lineTo(0, 1.15);
+        flagShape.lineTo(1.25, 0.9);
+        flagShape.lineTo(0, 0.65);
         flagShape.lineTo(0, 0);
         var flagGeo = new THREE.ShapeGeometry(flagShape);
         return flagGeo;
@@ -2206,10 +2206,16 @@ var ThreeMap = (function() {
     var typeDef = POI_TYPES[poi.type] || POI_TYPES.note;
     var group = new THREE.Group();
 
+    var isFlagType = (typeDef.shape === 'flag' || typeDef.shape === 'checkered');
     var surfaceGroup = new THREE.Group();
     surfaceGroup.userData.isPOISurface = true;
 
-    var baseGeo = new THREE.CylinderGeometry(0.3, 0.4, 0.12, 12);
+    var baseGeo;
+    if (isFlagType) {
+      baseGeo = new THREE.CylinderGeometry(0.42, 0.52, 0.16, 12);
+    } else {
+      baseGeo = new THREE.CylinderGeometry(0.3, 0.4, 0.12, 12);
+    }
     var baseMat = new THREE.MeshStandardMaterial({
       color: typeDef.color,
       emissive: typeDef.emissive,
@@ -2218,15 +2224,17 @@ var ThreeMap = (function() {
       metalness: 0.2
     });
     var base = new THREE.Mesh(baseGeo, baseMat);
-    base.position.y = 0.06;
+    base.position.y = isFlagType ? 0.08 : 0.06;
     surfaceGroup.add(base);
 
-    var ringGeo = new THREE.RingGeometry(0.55, 0.7, 24);
+    var ringR1 = isFlagType ? 0.7 : 0.55;
+    var ringR2 = isFlagType ? 0.9 : 0.7;
+    var ringGeo = new THREE.RingGeometry(ringR1, ringR2, 28);
     ringGeo.rotateX(-Math.PI / 2);
     var ringMat = new THREE.MeshBasicMaterial({
       color: typeDef.color,
       transparent: true,
-      opacity: 0.5,
+      opacity: isFlagType ? 0.6 : 0.5,
       side: THREE.DoubleSide,
       depthWrite: false
     });
@@ -2234,7 +2242,9 @@ var ThreeMap = (function() {
     ring.position.y = 0.02;
     surfaceGroup.add(ring);
 
-    var pulseGeo = new THREE.RingGeometry(0.7, 0.9, 32);
+    var pulseR1 = isFlagType ? 0.9 : 0.7;
+    var pulseR2 = isFlagType ? 1.15 : 0.9;
+    var pulseGeo = new THREE.RingGeometry(pulseR1, pulseR2, 36);
     pulseGeo.rotateX(-Math.PI / 2);
     var pulseMat = new THREE.MeshBasicMaterial({
       color: typeDef.color,
@@ -2250,15 +2260,27 @@ var ThreeMap = (function() {
 
     group.add(surfaceGroup);
 
-    var stemGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.6, 6);
-    var stemMat = new THREE.MeshStandardMaterial({
-      color: typeDef.color,
-      emissive: typeDef.emissive,
-      emissiveIntensity: 0.3,
-      roughness: 0.5
-    });
+    var stemHeight = isFlagType ? 1.1 : 0.6;
+    var stemR = isFlagType ? 0.085 : 0.06;
+    var stemGeo = new THREE.CylinderGeometry(stemR, stemR, stemHeight, isFlagType ? 8 : 6);
+    var stemMat;
+    if (isFlagType) {
+      stemMat = new THREE.MeshStandardMaterial({
+        color: 0xddbb88,
+        emissive: 0x553311,
+        emissiveIntensity: 0.12,
+        roughness: 0.6
+      });
+    } else {
+      stemMat = new THREE.MeshStandardMaterial({
+        color: typeDef.color,
+        emissive: typeDef.emissive,
+        emissiveIntensity: 0.3,
+        roughness: 0.5
+      });
+    }
     var stem = new THREE.Mesh(stemGeo, stemMat);
-    stem.position.y = 0.42;
+    stem.position.y = isFlagType ? 0.7 : 0.42;
     group.add(stem);
 
     var iconGeo = createPOIMarkerGeometry(typeDef.shape);
@@ -2297,8 +2319,12 @@ var ThreeMap = (function() {
       });
     }
     var icon = new THREE.Mesh(iconGeo, iconMat);
-    icon.position.y = typeDef.shape === 'flag' || typeDef.shape === 'checkered' ? 0.72 : 0.95;
-    if (typeDef.shape === 'flag' || typeDef.shape === 'checkered') icon.position.x = 0.06;
+    if (isFlagType) {
+      icon.position.y = 1.25;
+      icon.position.x = 0.07;
+    } else {
+      icon.position.y = 0.95;
+    }
     if (typeDef.shape === 'warning') icon.rotation.x = 0;
     if (typeDef.shape === 'tent') icon.rotation.y = Math.PI / 4;
     group.add(icon);
@@ -2327,9 +2353,10 @@ var ThreeMap = (function() {
       var lt = new THREE.CanvasTexture(lc);
       var lm = new THREE.SpriteMaterial({ map: lt, transparent: true, depthTest: false, depthWrite: false });
       var ls = new THREE.Sprite(lm);
-      ls.position.y = 1.7;
+      ls.position.y = isFlagType ? 2.5 : 1.7;
       var aspect = textWidth / 36;
-      ls.scale.set(aspect * 0.9, 0.9, 1);
+      var labelScale = isFlagType ? 1.15 : 0.9;
+      ls.scale.set(aspect * labelScale, labelScale, 1);
       ls.userData.isPOILabel = true;
       group.add(ls);
     }
@@ -4837,8 +4864,8 @@ var ThreeMap = (function() {
           }
           var wp = new THREE.Vector3();
           hoverPOIMarker.getWorldPosition(wp);
-          var isFlagType = (pdef.shape === 'flag' || pdef.shape === 'checkered');
-          var topOff = isFlagType ? 0.85 : 1.0;
+          var isFlagType2 = (pdef.shape === 'flag' || pdef.shape === 'checkered');
+          var topOff = isFlagType2 ? 2.3 : 1.0;
           showBeamEffectAt(wp, topOff, wp.y, beamColorConfig);
         } else if (peakHit < 0) {
           hidePeakSelectionEffect();
@@ -6124,9 +6151,9 @@ var ThreeMap = (function() {
       beamTargetPos = wp;
       var poiData = hoverPOIMarker.userData.poiData;
       var poiTypeDef = poiData ? (POI_TYPES[poiData.type] || POI_TYPES.note) : POI_TYPES.note;
-      var isFlagType = (poiTypeDef.shape === 'flag' || poiTypeDef.shape === 'checkered');
+      var isFlagTypePOI = (poiTypeDef.shape === 'flag' || poiTypeDef.shape === 'checkered');
       beamBaseY = wp.y;
-      topOffset = isFlagType ? 0.85 : 1.0;
+      topOffset = isFlagTypePOI ? 2.3 : 1.0;
     } else {
       return;
     }
