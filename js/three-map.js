@@ -79,6 +79,12 @@ var ThreeMap = (function() {
   var peakParticles = [];
   var peakOrigEmissive = [];
 
+  var beamTargetType = null;
+  var beamTargetPos = null;
+  var beamColor = { core: 0xffffff, mid: 0xffee99, glow: 0xffcc44, particle: 0xffdd66, halo: 0xffeeaa, halo2: 0xffdd66 };
+  var hoverPOIIndex = -1;
+  var hoverPOIMarker = null;
+
   // POI用户标记系统
   var POI_TYPES = {
     water:   { name: '水源',     icon: '💧', color: 0x4499ff, emissive: 0x2266cc, shape: 'drop' },
@@ -1331,8 +1337,8 @@ var ThreeMap = (function() {
       });
     }
 
-    // 台顶选中特效脉冲 & 粒子流动
-    if (selectedPeakIndex >= 0 && peakBeamCoreMesh && peakBeamCoreMesh.visible) {
+    // 台顶/POI选中特效脉冲 & 粒子流动
+    if (peakBeamCoreMesh && peakBeamCoreMesh.visible) {
       updatePeakSelectionEffect(selectedPeakIndex);
     }
 
@@ -4796,10 +4802,50 @@ var ThreeMap = (function() {
     if (!editMode && !poiPlacementMode) {
       var poiHit = pickPOIMarker(e.clientX, e.clientY);
       var peakHit = -1;
+      var poiHitMarker = poiHit;
       if (!poiHit) {
         peakHit = pickPeakMesh(e.clientX, e.clientY);
       }
-      if (peakHit !== hoverPeakIndex) {
+
+      var newHoverPOI = null;
+      if (poiHitMarker) {
+        var pd = poiHitMarker.userData.poiData;
+        if (pd && (pd.type === 'start' || pd.type === 'end')) {
+          newHoverPOI = poiHitMarker;
+        }
+      }
+      if (newHoverPOI !== hoverPOIMarker) {
+        if (hoverPOIMarker) {
+          var ud = hoverPOIMarker.userData;
+          if (ud.base && ud.base.material && ud.base.material.emissive) {
+            ud.base.material.emissive.setHex(POI_TYPES[ud.poiData.type].emissive);
+            ud.base.material.emissiveIntensity = 0.5;
+          }
+        }
+        hoverPOIMarker = newHoverPOI;
+        if (hoverPOIMarker) {
+          var pud = hoverPOIMarker.userData;
+          var ptype = pud.poiData.type;
+          var pdef = POI_TYPES[ptype] || POI_TYPES.note;
+          var isStart = (ptype === 'start');
+          var beamColorConfig = isStart
+            ? { core: 0xffffff, mid: 0x88ffaa, glow: 0x44dd66, particle: 0x88ffbb, halo: 0xaaffcc, halo2: 0x66ff99 }
+            : { core: 0xffffff, mid: 0xffaa88, glow: 0xff5533, particle: 0xffbb88, halo: 0xffccaa, halo2: 0xff8866 };
+          if (pud.base && pud.base.material && pud.base.material.emissive) {
+            pud.base.material.emissive.setHex(0xffffff);
+            pud.base.material.emissiveIntensity = 1.0;
+          }
+          var wp = new THREE.Vector3();
+          hoverPOIMarker.getWorldPosition(wp);
+          var isFlagType = (pdef.shape === 'flag' || pdef.shape === 'checkered');
+          var topOff = isFlagType ? 0.85 : 1.0;
+          showBeamEffectAt(wp, topOff, wp.y, beamColorConfig);
+        } else if (peakHit < 0) {
+          hidePeakSelectionEffect();
+        }
+      }
+
+      if (peakHit !== hoverPeakIndex && !newHoverPOI) {
         if (hoverPeakIndex >= 0) setPeakHighlight(hoverPeakIndex, false);
         hoverPeakIndex = peakHit;
         if (hoverPeakIndex >= 0) {
@@ -4816,6 +4862,9 @@ var ThreeMap = (function() {
     }
 
     if (editMode) {
+      if (hoverPOIMarker) {
+        hidePeakSelectionEffect();
+      }
       if (editTool !== 'peak' && hoverPeakIndex >= 0) {
         setPeakHighlight(hoverPeakIndex, false);
         hoverPeakIndex = -1;
@@ -5943,40 +5992,46 @@ var ThreeMap = (function() {
     return [peakBeamCoreMesh, peakBeamMesh, peakBeamGlowMesh, peakHaloMesh, peakHaloMesh.userData && peakHaloMesh.userData.outerRing];
   }
 
-  function showPeakSelectionEffect(pi) {
+  function showBeamEffectAt(worldPos, topOffset, beamBaseY, colorConfig) {
     createPeakSelectionEffect();
-    if (pi < 0 || !peakMeshesRefs[pi]) {
-      hidePeakSelectionEffect();
-      return;
-    }
-    var wp = getPeakWorldPos(pi);
-    var isWutaishan = currentMountainRoute && currentMountainRoute.id === 'wutaishan';
-    var topOffset = isWutaishan ? 2.8 : 2.2;
-    var beamBaseY = wp.y + (isWutaishan ? 0.08 : 1.1);
+    beamTargetPos = worldPos;
+    beamTargetType = 'poi';
+    if (colorConfig) beamColor = colorConfig;
     var beamH = 60;
     var beamCtrY = beamBaseY + beamH / 2;
 
-    peakBeamCoreMesh.position.set(wp.x, beamCtrY, wp.z);
+    peakBeamCoreMesh.material.color.setHex(beamColor.core);
+    peakBeamMesh.material.color.setHex(beamColor.mid);
+    peakBeamGlowMesh.material.color.setHex(beamColor.glow);
+    peakHaloMesh.material.color.setHex(beamColor.halo);
+    var outerRing = peakHaloMesh.userData.outerRing;
+    if (outerRing) outerRing.material.color.setHex(beamColor.halo2);
+    for (var pi = 0; pi < peakParticles.length; pi++) {
+      var pu = peakParticles[pi].userData;
+      if (pu.coreMat) pu.coreMat.color.setHex(0xffffff);
+      if (pu.glowMat) pu.glowMat.color.setHex(beamColor.particle);
+    }
+
+    peakBeamCoreMesh.position.set(worldPos.x, beamCtrY, worldPos.z);
     peakBeamCoreMesh.visible = true;
     peakBeamCoreMesh.material.opacity = 0.25;
 
-    peakBeamMesh.position.set(wp.x, beamCtrY, wp.z);
+    peakBeamMesh.position.set(worldPos.x, beamCtrY, worldPos.z);
     peakBeamMesh.visible = true;
     peakBeamMesh.material.opacity = 0.08;
 
-    peakBeamGlowMesh.position.set(wp.x, beamCtrY, wp.z);
+    peakBeamGlowMesh.position.set(worldPos.x, beamCtrY, worldPos.z);
     peakBeamGlowMesh.visible = true;
     peakBeamGlowMesh.material.opacity = 0.03;
 
     var haloY = beamBaseY + topOffset;
-    peakHaloMesh.position.set(wp.x, haloY, wp.z);
+    peakHaloMesh.position.set(worldPos.x, haloY, worldPos.z);
     peakHaloMesh.visible = true;
     peakHaloMesh.material.opacity = 0.6;
     peakHaloMesh.scale.setScalar(1);
 
-    var outerRing = peakHaloMesh.userData.outerRing;
     if (outerRing) {
-      outerRing.position.set(wp.x, haloY, wp.z);
+      outerRing.position.set(worldPos.x, haloY, worldPos.z);
       outerRing.visible = true;
       outerRing.material.opacity = 0.2;
       outerRing.scale.setScalar(1);
@@ -5987,14 +6042,53 @@ var ThreeMap = (function() {
       var p = peakParticles[i];
       p.visible = true;
       p.userData.cycleStart = now - p.userData.slot * 3.5;
-      p.position.set(wp.x, beamBaseY + beamH, wp.z);
+      p.position.set(worldPos.x, beamBaseY + beamH, worldPos.z);
       p.scale.setScalar(1);
       if (p.userData.coreMat) p.userData.coreMat.opacity = 0;
       if (p.userData.glowMat) p.userData.glowMat.opacity = 0;
     }
   }
 
+  function showPeakSelectionEffect(pi) {
+    createPeakSelectionEffect();
+    beamTargetType = 'peak';
+    beamColor = { core: 0xffffff, mid: 0xffee99, glow: 0xffcc44, particle: 0xffdd66, halo: 0xffeeaa, halo2: 0xffdd66 };
+    peakBeamCoreMesh.material.color.setHex(beamColor.core);
+    peakBeamMesh.material.color.setHex(beamColor.mid);
+    peakBeamGlowMesh.material.color.setHex(beamColor.glow);
+    peakHaloMesh.material.color.setHex(beamColor.halo);
+    var outerRing = peakHaloMesh.userData.outerRing;
+    if (outerRing) outerRing.material.color.setHex(beamColor.halo2);
+    for (var pi2 = 0; pi2 < peakParticles.length; pi2++) {
+      var pu = peakParticles[pi2].userData;
+      if (pu.coreMat) pu.coreMat.color.setHex(0xffffff);
+      if (pu.glowMat) pu.glowMat.color.setHex(beamColor.particle);
+    }
+    if (pi < 0 || !peakMeshesRefs[pi]) {
+      hidePeakSelectionEffect();
+      return;
+    }
+    var wp = getPeakWorldPos(pi);
+    beamTargetPos = wp;
+    var isWutaishan = currentMountainRoute && currentMountainRoute.id === 'wutaishan';
+    var topOffset = isWutaishan ? 2.8 : 2.2;
+    var beamBaseY = wp.y + (isWutaishan ? 0.08 : 1.1);
+    showBeamEffectAt(wp, topOffset, beamBaseY, beamColor);
+    beamTargetType = 'peak';
+  }
+
   function hidePeakSelectionEffect() {
+    if (hoverPOIMarker) {
+      var ud = hoverPOIMarker.userData;
+      if (ud.poiData && ud.base && ud.base.material && ud.base.material.emissive) {
+        var pdef = POI_TYPES[ud.poiData.type] || POI_TYPES.note;
+        ud.base.material.emissive.setHex(pdef.emissive);
+        ud.base.material.emissiveIntensity = 0.5;
+      }
+      hoverPOIMarker = null;
+    }
+    beamTargetType = null;
+    beamTargetPos = null;
     var list = [peakBeamCoreMesh, peakBeamMesh, peakBeamGlowMesh, peakHaloMesh];
     if (peakHaloMesh && peakHaloMesh.userData && peakHaloMesh.userData.outerRing) {
       list.push(peakHaloMesh.userData.outerRing);
@@ -6014,13 +6108,30 @@ var ThreeMap = (function() {
   }
 
   function updatePeakSelectionEffect(pi) {
-    if (pi < 0 || !peakMeshesRefs[pi] || !peakBeamCoreMesh || !peakBeamCoreMesh.visible) return;
-    var wp = getPeakWorldPos(pi);
-    var isWutaishan = currentMountainRoute && currentMountainRoute.id === 'wutaishan';
-    var beamBaseY = wp.y + (isWutaishan ? 0.08 : 1.1);
+    if (!peakBeamCoreMesh || !peakBeamCoreMesh.visible) return;
+    var wp, beamBaseY, topOffset;
+    if (beamTargetType === 'peak') {
+      if (pi < 0 || !peakMeshesRefs[pi]) return;
+      wp = getPeakWorldPos(pi);
+      beamTargetPos = wp;
+      var isWutaishan = currentMountainRoute && currentMountainRoute.id === 'wutaishan';
+      beamBaseY = wp.y + (isWutaishan ? 0.08 : 1.1);
+      topOffset = isWutaishan ? 2.8 : 2.2;
+    } else if (beamTargetType === 'poi') {
+      if (!hoverPOIMarker) { hidePeakSelectionEffect(); return; }
+      wp = new THREE.Vector3();
+      hoverPOIMarker.getWorldPosition(wp);
+      beamTargetPos = wp;
+      var poiData = hoverPOIMarker.userData.poiData;
+      var poiTypeDef = poiData ? (POI_TYPES[poiData.type] || POI_TYPES.note) : POI_TYPES.note;
+      var isFlagType = (poiTypeDef.shape === 'flag' || poiTypeDef.shape === 'checkered');
+      beamBaseY = wp.y;
+      topOffset = isFlagType ? 0.85 : 1.0;
+    } else {
+      return;
+    }
     var beamH = 60;
     var beamCtrY = beamBaseY + beamH / 2;
-    var topOffset = isWutaishan ? 2.8 : 2.2;
     var targetY = beamBaseY + topOffset;
     var startY = beamBaseY + beamH * 0.95;
     var haloY = targetY;
