@@ -2185,13 +2185,21 @@ var ThreeMap = (function() {
         return new THREE.BoxGeometry(0.5, 0.8, 0.15);
       case 'box':
         return new THREE.BoxGeometry(0.55, 0.55, 0.55);
-      case 'flag':
+      case 'flag': {
+        var flagShape = new THREE.Shape();
+        flagShape.moveTo(0, 0);
+        flagShape.lineTo(0, 0.6);
+        flagShape.lineTo(0.95, 0.3);
+        flagShape.lineTo(0, 0);
+        var flagGeo = new THREE.ShapeGeometry(flagShape);
+        return flagGeo;
+      }
       case 'checkered': {
         var flagShape = new THREE.Shape();
         flagShape.moveTo(0, 0);
-        flagShape.lineTo(0, 1.15);
-        flagShape.lineTo(1.25, 0.9);
-        flagShape.lineTo(0, 0.65);
+        flagShape.lineTo(0, 0.55);
+        flagShape.lineTo(0.9, 0.55);
+        flagShape.lineTo(0.9, 0);
         flagShape.lineTo(0, 0);
         var flagGeo = new THREE.ShapeGeometry(flagShape);
         return flagGeo;
@@ -2260,8 +2268,8 @@ var ThreeMap = (function() {
 
     group.add(surfaceGroup);
 
-    var stemHeight = isFlagType ? 1.1 : 0.6;
-    var stemR = isFlagType ? 0.085 : 0.06;
+    var stemHeight = isFlagType ? 1.2 : 0.6;
+    var stemR = isFlagType ? 0.07 : 0.06;
     var stemGeo = new THREE.CylinderGeometry(stemR, stemR, stemHeight, isFlagType ? 8 : 6);
     var stemMat;
     if (isFlagType) {
@@ -2280,16 +2288,16 @@ var ThreeMap = (function() {
       });
     }
     var stem = new THREE.Mesh(stemGeo, stemMat);
-    stem.position.y = isFlagType ? 0.7 : 0.42;
+    stem.position.y = isFlagType ? 0.68 : 0.42;
     group.add(stem);
 
     var iconGeo = createPOIMarkerGeometry(typeDef.shape);
     var iconMat;
     if (typeDef.shape === 'checkered') {
       var texCanvas = document.createElement('canvas');
-      texCanvas.width = 64; texCanvas.height = 48;
+      texCanvas.width = 72; texCanvas.height = 44;
       var tctx = texCanvas.getContext('2d');
-      var cellW = 16, cellH = 12;
+      var cellW = 18, cellH = 11;
       for (var cy = 0; cy < 4; cy++) {
         for (var cx = 0; cx < 4; cx++) {
           tctx.fillStyle = ((cx + cy) % 2 === 0) ? '#ffffff' : '#222222';
@@ -2320,7 +2328,7 @@ var ThreeMap = (function() {
     }
     var icon = new THREE.Mesh(iconGeo, iconMat);
     if (isFlagType) {
-      icon.position.y = 1.25;
+      icon.position.y = 1.28;
       icon.position.x = 0.07;
     } else {
       icon.position.y = 0.95;
@@ -2353,7 +2361,7 @@ var ThreeMap = (function() {
       var lt = new THREE.CanvasTexture(lc);
       var lm = new THREE.SpriteMaterial({ map: lt, transparent: true, depthTest: false, depthWrite: false });
       var ls = new THREE.Sprite(lm);
-      ls.position.y = isFlagType ? 2.5 : 1.7;
+      ls.position.y = isFlagType ? 2.15 : 1.7;
       var aspect = textWidth / 36;
       var labelScale = isFlagType ? 1.15 : 0.9;
       ls.scale.set(aspect * labelScale, labelScale, 1);
@@ -4865,7 +4873,7 @@ var ThreeMap = (function() {
           var wp = new THREE.Vector3();
           hoverPOIMarker.getWorldPosition(wp);
           var isFlagType2 = (pdef.shape === 'flag' || pdef.shape === 'checkered');
-          var topOff = isFlagType2 ? 2.3 : 1.0;
+          var topOff = isFlagType2 ? 1.9 : 1.0;
           showBeamEffectAt(wp, topOff, wp.y, beamColorConfig);
         } else if (peakHit < 0) {
           hidePeakSelectionEffect();
@@ -6149,11 +6157,10 @@ var ThreeMap = (function() {
       wp = new THREE.Vector3();
       hoverPOIMarker.getWorldPosition(wp);
       beamTargetPos = wp;
-      var poiData = hoverPOIMarker.userData.poiData;
       var poiTypeDef = poiData ? (POI_TYPES[poiData.type] || POI_TYPES.note) : POI_TYPES.note;
       var isFlagTypePOI = (poiTypeDef.shape === 'flag' || poiTypeDef.shape === 'checkered');
       beamBaseY = wp.y;
-      topOffset = isFlagTypePOI ? 2.3 : 1.0;
+      topOffset = isFlagTypePOI ? 1.9 : 1.0;
     } else {
       return;
     }
