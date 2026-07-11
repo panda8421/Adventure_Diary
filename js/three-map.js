@@ -3818,8 +3818,7 @@ var ThreeMap = (function() {
     var route = currentMountainRoute;
     var terrain = route.terrain;
     var seed = route.lng * 1000 + route.lat;
-    var size = 60;
-    var heightScale = 0.018;
+    var size = getTerrainSize();
     var baseHeight = terrain.baseHeight || 1000;
     var trailMeshes = [];
     var peakMeshes = [];
@@ -5102,7 +5101,7 @@ var ThreeMap = (function() {
     var hits = editRaycaster.intersectObjects(trailMeshes, false);
     if (hits.length === 0) return -1;
     var hitPoint = hits[0].point;
-    var size = 60;
+    var size = getTerrainSize();
     var bestIdx = -1;
     var bestDist = Infinity;
     for (var i = 0; i < workingTrailPoints.length; i++) {
@@ -5201,8 +5200,12 @@ var ThreeMap = (function() {
     return null;
   }
 
+  function getTerrainSize() {
+    return (terrainMesh && terrainMesh.userData.size) || 60;
+  }
+
   function worldToUV(wx, wz) {
-    var size = 60;
+    var size = getTerrainSize();
     var nx = (wx + size / 2) / size;
     var nz = (wz + size / 2) / size;
     return { x: Math.max(0.001, Math.min(0.999, nx)), y: Math.max(0.001, Math.min(0.999, nz)) };
@@ -5300,7 +5303,7 @@ var ThreeMap = (function() {
     riverHandlesGroup.visible = (editMode && editTool === 'river');
     if (!riverHandlesGroup.visible) return;
     var pts = ensureWorkingRiverPoints();
-    var size = 60;
+    var size = getTerrainSize();
     var hMatU = new THREE.MeshBasicMaterial({ color: 0x2288cc });
     var hMatS = new THREE.MeshBasicMaterial({ color: 0x66ddff });
     for (var i = 0; i < pts.length; i++) {
@@ -5358,7 +5361,7 @@ var ThreeMap = (function() {
       var waterHits = editRaycaster.intersectObjects(waterMeshes, false);
       if (waterHits.length > 0) {
         var hitPt = waterHits[0].point;
-        var size = 60;
+        var size = getTerrainSize();
         var pts = ensureWorkingRiverPoints();
         var bestIdx = -1;
         var bestDist = Infinity;
@@ -5375,7 +5378,7 @@ var ThreeMap = (function() {
     }
     var terrainHit = getTerrainHitPoint(clientX, clientY);
     if (terrainHit) {
-      var size2 = 60;
+      var size2 = getTerrainSize();
       var pts2 = ensureWorkingRiverPoints();
       var bestIdx2 = -1;
       var bestDist2 = Infinity;
@@ -5417,7 +5420,7 @@ var ThreeMap = (function() {
     if (!workingRiverPoints || workingRiverPoints.length === 0) return -1;
     var hit = getTerrainHitPoint(clientX, clientY);
     if (!hit) return -1;
-    var size = 60;
+    var size = getTerrainSize();
     var pts = workingRiverPoints;
     var bestIdx = -1;
     var bestDist = Infinity;
