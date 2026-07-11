@@ -6158,10 +6158,11 @@ var ThreeMap = (function() {
       wp = new THREE.Vector3();
       hoverPOIMarker.getWorldPosition(wp);
       beamTargetPos = wp;
-      var poiTypeDef = poiData ? (POI_TYPES[poiData.type] || POI_TYPES.note) : POI_TYPES.note;
+      var poiData2 = hoverPOIMarker.userData.poiData;
+      var poiTypeDef = poiData2 ? (POI_TYPES[poiData2.type] || POI_TYPES.note) : POI_TYPES.note;
       var isFlagTypePOI = (poiTypeDef.shape === 'flag' || poiTypeDef.shape === 'checkered');
       beamBaseY = wp.y;
-      topOffset = isFlagTypePOI ? 1.9 : 1.0;
+      topOffset = isFlagTypePOI ? 1.8 : 1.0;
     } else {
       return;
     }
