@@ -682,6 +682,12 @@ const RouteModule = (function() {
         closePanel();
         return;
       }
+      if (e.target.closest('#route-panel-toggle')) {
+        if (currentRouteId) {
+          openPanel(currentRouteId);
+        }
+        return;
+      }
       var starEl = e.target.closest('.interactive-star');
       if (starEl) {
         var routeId = starEl.getAttribute('data-route-id');
@@ -807,6 +813,28 @@ const RouteModule = (function() {
     if (!panel) return;
     renderRoutePanel(routeId);
     panel.classList.add('open');
+    hidePanelToggle();
+  }
+
+  function isInMountainMode() {
+    return typeof ThreeMap !== 'undefined' && ThreeMap.getViewMode && ThreeMap.getViewMode() === 'mountain';
+  }
+
+  function showPanelToggle() {
+    var toggle = document.getElementById('route-panel-toggle');
+    if (toggle) toggle.classList.add('visible');
+  }
+
+  function hidePanelToggle() {
+    var toggle = document.getElementById('route-panel-toggle');
+    if (toggle) toggle.classList.remove('visible');
+  }
+
+  function resetOnExitMountain() {
+    var panel = document.getElementById('route-panel');
+    if (panel) panel.classList.remove('open');
+    hidePanelToggle();
+    currentRouteId = null;
   }
 
   function closePanel() {
@@ -814,8 +842,12 @@ const RouteModule = (function() {
     if (panel) {
       panel.classList.remove('open');
     }
-    currentRouteId = null;
-    MapModule.resetView();
+    if (isInMountainMode()) {
+      showPanelToggle();
+    } else {
+      currentRouteId = null;
+      MapModule.resetView();
+    }
   }
 
   function openImagePreview(src) {
@@ -968,6 +1000,9 @@ const RouteModule = (function() {
     closePanel,
     openImagePreview,
     isOpen,
-    refreshTrailSelector
+    refreshTrailSelector,
+    resetOnExitMountain,
+    hidePanelToggle,
+    showPanelToggle
   };
 })();

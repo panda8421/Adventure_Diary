@@ -5710,6 +5710,9 @@ var ThreeMap = (function() {
     if (backButton) backButton.style.display = 'none';
     if (editEntryBtn) editEntryBtn.style.display = 'none';
     if (addMarkerBtn) addMarkerBtn.style.display = 'none';
+    if (typeof RouteModule !== 'undefined' && RouteModule.resetOnExitMountain) {
+      RouteModule.resetOnExitMountain();
+    }
     toggleEditMode(false);
     exitPOIPlacementMode();
     hidePOIEditPanel();

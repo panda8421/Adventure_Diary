@@ -64,9 +64,12 @@ const App = (function() {
 
   // 关闭所有面板
   function closeAllPanels() {
+    var inMountainMode = typeof ThreeMap !== 'undefined' && ThreeMap.getViewMode && ThreeMap.getViewMode() === 'mountain';
     RouteModule.closePanel();
     GearModule.closePanel();
-    MapModule.resetView();
+    if (!inMountainMode) {
+      MapModule.resetView();
+    }
   }
 
   return {
