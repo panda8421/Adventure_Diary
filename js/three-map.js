@@ -2379,6 +2379,10 @@ var ThreeMap = (function() {
     group.userData.pulse = pulse;
     group.userData.label = ls || null;
 
+    if (isFlagType) {
+      group.scale.setScalar(1.6);
+    }
+
     return group;
   }
 
@@ -4874,7 +4878,7 @@ var ThreeMap = (function() {
           var wp = new THREE.Vector3();
           hoverPOIMarker.getWorldPosition(wp);
           var isFlagType2 = (pdef.shape === 'flag' || pdef.shape === 'checkered');
-          var topOff = isFlagType2 ? 1.8 : 1.0;
+          var topOff = isFlagType2 ? 2.9 : 1.0;
           showBeamEffectAt(wp, topOff, wp.y, beamColorConfig);
         } else if (peakHit < 0) {
           hidePeakSelectionEffect();
@@ -6162,7 +6166,7 @@ var ThreeMap = (function() {
       var poiTypeDef = poiData2 ? (POI_TYPES[poiData2.type] || POI_TYPES.note) : POI_TYPES.note;
       var isFlagTypePOI = (poiTypeDef.shape === 'flag' || poiTypeDef.shape === 'checkered');
       beamBaseY = wp.y;
-      topOffset = isFlagTypePOI ? 1.8 : 1.0;
+      topOffset = isFlagTypePOI ? 2.9 : 1.0;
     } else {
       return;
     }
