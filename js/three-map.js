@@ -4857,7 +4857,7 @@ var ThreeMap = (function() {
         hoverTrailIndex = trailHitDown;
         rebuildTrailHandles();
         if (beamTargetType !== 'poi' && beamTargetType !== 'peak') {
-          var tGrpDn = trailHandlesGroup.children[trailHitDown];
+          var tGrpDn = getTrailHandleGroupByIndex(trailHitDown);
           if (tGrpDn) {
             var tWpDn = tGrpDn.position.clone();
             var tBeamDn = { core: 0xffffff, mid: 0x00e5ff, glow: 0x00b8d4, particle: 0x80ffff, halo: 0x80ffff, halo2: 0x40e0ff };
@@ -5147,7 +5147,7 @@ var ThreeMap = (function() {
       if (trailHit !== hoverTrailIndex) {
         hoverTrailIndex = trailHit;
         if (trailHit >= 0 && !newHoverPOI && peakHit < 0) {
-          var trailGroup = trailHandlesGroup.children[trailHit];
+          var trailGroup = getTrailHandleGroupByIndex(trailHit);
           if (trailGroup) {
             var trailWp = trailGroup.position.clone();
             var trailBeamColor = { core: 0xffffff, mid: 0x00e5ff, glow: 0x00b8d4, particle: 0x80ffff, halo: 0x80ffff, halo2: 0x40e0ff };
@@ -5330,7 +5330,7 @@ var ThreeMap = (function() {
             hoverPOIMarker = null;
           }
           if (hoverPeakIndex >= 0) { setPeakHighlight(hoverPeakIndex, false); hoverPeakIndex = -1; selectedPeakIndex = -1; }
-          var tGrp = trailHandlesGroup.children[reHitTrail];
+          var tGrp = getTrailHandleGroupByIndex(reHitTrail);
           if (tGrp) {
             var tWp = tGrp.position.clone();
             var tBeam = { core: 0xffffff, mid: 0x00e5ff, glow: 0x00b8d4, particle: 0x80ffff, halo: 0x80ffff, halo2: 0x40e0ff };
@@ -6231,6 +6231,15 @@ var ThreeMap = (function() {
     updateTrailHandlePositions();
   }
 
+  function getTrailHandleGroupByIndex(idx) {
+    if (!trailHandlesGroup || idx < 0) return null;
+    for (var ci = 0; ci < trailHandlesGroup.children.length; ci++) {
+      var c = trailHandlesGroup.children[ci];
+      if (c.userData && c.userData.isTrailHandleGroup && c.userData.handleIndex === idx) return c;
+    }
+    return null;
+  }
+
   function updateTrailHandlePositions() {
     if (!trailHandlesGroup || !trailHandlesGroup.visible) return;
     var pts = workingTrailPoints;
@@ -6704,8 +6713,9 @@ var ThreeMap = (function() {
       topOffset = isFlagTypePOI ? 2.9 : 1.0;
     } else if (beamTargetType === 'trail') {
       var tIdx = isDraggingTrail ? selectedTrailIndex : hoverTrailIndex;
-      if (tIdx < 0 || !trailHandlesGroup || !trailHandlesGroup.children[tIdx]) { hidePeakSelectionEffect(); return; }
-      wp = trailHandlesGroup.children[tIdx].position.clone();
+      var tGrpUpdate = getTrailHandleGroupByIndex(tIdx);
+      if (tIdx < 0 || !tGrpUpdate) { hidePeakSelectionEffect(); return; }
+      wp = tGrpUpdate.position.clone();
       beamTargetPos = wp;
       beamBaseY = wp.y;
       topOffset = 1.0;
