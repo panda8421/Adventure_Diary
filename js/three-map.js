@@ -4484,6 +4484,7 @@ var ThreeMap = (function() {
       + '    <div>⇧ Shift+点击 添加路径点</div>'
       + '    <div>⌫ Delete 删除选中点</div>'
       + '  </div>'
+      + '  <button id="trail-clear-btn" style="width:100%;margin-top:8px;padding:6px 8px;background:rgba(180,50,50,0.25);border:1px solid rgba(220,80,80,0.5);border-radius:5px;color:#ff8888;cursor:pointer;font-size:11px;">🗑️ 清空整条路径</button>'
       + '</div>'
       + '<div id="river-tools" style="display:none;margin-bottom:14px;padding:10px;background:rgba(10,25,50,0.6);border-radius:8px;border:1px solid rgba(80,150,220,0.2);">'
       + '  <div style="margin-bottom:8px;">'
@@ -4642,6 +4643,13 @@ var ThreeMap = (function() {
     panel.querySelector('#edit-save').addEventListener('click', function() { saveAllMods(); });
     panel.querySelector('#edit-reset').addEventListener('click', function() { resetAllMods(); });
     panel.querySelector('#edit-toggle-btn').addEventListener('click', function() { toggleEditMode(false); });
+    var trailClearBtn = panel.querySelector('#trail-clear-btn');
+    if (trailClearBtn) {
+      trailClearBtn.addEventListener('click', function() {
+        if (!confirm('确定要清空整条路径吗？此操作不可撤销，清空后需重新绘制路径。')) return;
+        clearAllTrailPoints();
+      });
+    }
   }
 
   var editEntryBtn = null;
@@ -5712,6 +5720,14 @@ var ThreeMap = (function() {
       var key = getStorageKey(currentMountainRoute.id);
       var existing = {};
       try { existing = JSON.parse(localStorage.getItem(key)) || {}; } catch(e) {}
+      existing.localModified = Date.now();
+      if (workingTrailPoints) {
+        existing.trailPoints = workingTrailPoints.map(function(p) {
+          return { x: p.x, y: p.y, name: p.name };
+        });
+      } else {
+        delete existing.trailPoints;
+      }
       if (workingCustomTrails && workingCustomTrails.length > 0) {
         existing.customTrails = workingCustomTrails.map(function(t) {
           return { id: t.id, name: t.name, direction: t.direction, points: t.points.map(function(p) { return { x: p.x, y: p.y, name: p.name }; }) };
@@ -6911,6 +6927,22 @@ var ThreeMap = (function() {
     rebuildTrailRender();
     rebuildTrailHandles();
     showEditorToast('已删除路径点');
+  }
+
+  function clearAllTrailPoints() {
+    if (!currentMountainRoute || !currentMountainRoute.terrain) return;
+    workingTrailPoints = [];
+    selectedTrailIndex = -1;
+    hoverTrailIndex = -1;
+    isDraggingTrail = false;
+    pointerDownOnTrail = false;
+    trailDirectDrag = false;
+    trailDragMoved = false;
+    rebuildTrailRender();
+    rebuildTrailHandles();
+    if (beamTargetType === 'trail') hidePeakSelectionEffect();
+    saveActiveTrailOnly();
+    showEditorToast('路径已清空，Shift+点击地形添加新路径点');
   }
 
   function loadRiverMod(routeId) {
