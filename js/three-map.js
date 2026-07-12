@@ -70,6 +70,10 @@ var ThreeMap = (function() {
   var isDraggingPeak = false;
   var workingPeakPositions = null;
   var pointerDownOnPeak = false;
+  var peakDragStartX = 0;
+  var peakDragStartY = 0;
+  var peakDragMoved = false;
+  var peakDirectDrag = false;
   var peakMeshesRefs = [];
   var peakLabelRefs = [];
   var peakBeamMesh = null;
@@ -2678,6 +2682,21 @@ var ThreeMap = (function() {
     saveAllPOIs(all);
   }
 
+  function savePeakPositionsOnly() {
+    if (!currentMountainRoute || !workingPeakPositions) return;
+    try {
+      var key = getStorageKey(currentMountainRoute.id);
+      var prev = null;
+      try { var raw = localStorage.getItem(key); if (raw) prev = JSON.parse(raw); } catch(e) {}
+      var data = prev || {};
+      data.peakPositions = workingPeakPositions.map(function(p) { return { x: p.x, y: p.y }; });
+      data.localModified = Date.now();
+      if (prev && prev.lastSync) data.lastSync = prev.lastSync;
+      localStorage.setItem(key, JSON.stringify(data));
+      if (typeof SyncModule !== 'undefined' && SyncModule.markDirty) SyncModule.markDirty('terrainMods');
+    } catch(e) {}
+  }
+
   function deletePOI(poiId) {
     var all = loadAllPOIs();
     var list = all[currentMountainRoute.id] || [];
@@ -3623,6 +3642,8 @@ var ThreeMap = (function() {
     hoverPeakIndex = -1;
     isDraggingPeak = false;
     pointerDownOnPeak = false;
+    peakDragMoved = false;
+    peakDirectDrag = false;
     isDraggingPOI = false;
     pointerDownOnPOI = false;
     draggingPOIMarker = null;
@@ -4083,6 +4104,8 @@ var ThreeMap = (function() {
     hoverPeakIndex = -1;
     isDraggingPeak = false;
     pointerDownOnPeak = false;
+    peakDragMoved = false;
+    peakDirectDrag = false;
     isDraggingPOI = false;
     pointerDownOnPOI = false;
     draggingPOIMarker = null;
@@ -4731,6 +4754,21 @@ var ThreeMap = (function() {
         e.stopImmediatePropagation();
         return;
       }
+      var peakHitDown = pickPeakMesh(e.clientX, e.clientY);
+      if (peakHitDown >= 0) {
+        pointerDownOnPeak = true;
+        selectedPeakIndex = peakHitDown;
+        peakDragStartX = e.clientX;
+        peakDragStartY = e.clientY;
+        peakDragMoved = false;
+        isDraggingPeak = false;
+        peakDirectDrag = true;
+        setPeakHighlight(peakHitDown, true);
+        showPeakSelectionEffect(peakHitDown);
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
     }
 
     if (!editMode) return;
@@ -4901,6 +4939,24 @@ var ThreeMap = (function() {
           showBeamEffectAt(wpDrag, topOffDrag, wpDrag.y, beamColorDrag);
           renderer.domElement.style.cursor = 'move';
         }
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+    }
+
+    if (pointerDownOnPeak && peakDirectDrag && !editMode) {
+      var dxP = e.clientX - peakDragStartX;
+      var dyP = e.clientY - peakDragStartY;
+      var distP = Math.sqrt(dxP * dxP + dyP * dyP);
+      if (distP > 4) {
+        peakDragMoved = true;
+        isDraggingPeak = true;
+        try { renderer.domElement.setPointerCapture(e.pointerId); } catch(ex) {}
+      }
+      if (isDraggingPeak) {
+        dragPeakPoint(e.clientX, e.clientY);
+        renderer.domElement.style.cursor = 'move';
         e.preventDefault();
         e.stopImmediatePropagation();
         return;
@@ -5088,11 +5144,34 @@ var ThreeMap = (function() {
       e.preventDefault();
       return;
     }
-    if (isDraggingPeak) {
+    if (isDraggingPeak || (pointerDownOnPeak && peakDirectDrag)) {
+      var wasPeakDragging = isDraggingPeak;
+      var wasPeakMoved = peakDragMoved;
+      var wasDirectDrag = peakDirectDrag;
       isDraggingPeak = false;
       pointerDownOnPeak = false;
+      peakDirectDrag = false;
+      peakDragMoved = false;
       try { renderer.domElement.releasePointerCapture(e.pointerId); } catch(ex) {}
       e.preventDefault();
+      if (wasDirectDrag && wasPeakDragging) {
+        savePeakPositionsOnly();
+        var reHitPeak = pickPeakMesh(e.clientX, e.clientY);
+        if (reHitPeak >= 0) {
+          if (hoverPeakIndex >= 0 && hoverPeakIndex !== reHitPeak) setPeakHighlight(hoverPeakIndex, false);
+          hoverPeakIndex = reHitPeak;
+          selectedPeakIndex = reHitPeak;
+          setPeakHighlight(reHitPeak, true);
+          showPeakSelectionEffect(reHitPeak);
+        } else {
+          if (hoverPeakIndex >= 0) setPeakHighlight(hoverPeakIndex, false);
+          hoverPeakIndex = -1;
+          selectedPeakIndex = -1;
+          hidePeakSelectionEffect();
+        }
+        renderer.domElement.style.cursor = 'grab';
+        return;
+      }
       var reHit = pickPeakMesh(e.clientX, e.clientY);
       if (reHit >= 0) {
         if (hoverPeakIndex >= 0 && hoverPeakIndex !== reHit) setPeakHighlight(hoverPeakIndex, false);
@@ -6895,6 +6974,8 @@ var ThreeMap = (function() {
     hoverPeakIndex = -1;
     isDraggingPeak = false;
     pointerDownOnPeak = false;
+    peakDragMoved = false;
+    peakDirectDrag = false;
     isDraggingPOI = false;
     pointerDownOnPOI = false;
     draggingPOIMarker = null;
