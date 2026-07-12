@@ -85,6 +85,13 @@ var ThreeMap = (function() {
   var hoverPOIIndex = -1;
   var hoverPOIMarker = null;
 
+  var isDraggingPOI = false;
+  var pointerDownOnPOI = false;
+  var draggingPOIMarker = null;
+  var poiDragStartX = 0;
+  var poiDragStartY = 0;
+  var poiDragMoved = false;
+
   // POI用户标记系统
   var POI_TYPES = {
     water:   { name: '水源',     icon: '💧', color: 0x4499ff, emissive: 0x2266cc, shape: 'drop' },
@@ -2658,6 +2665,19 @@ var ThreeMap = (function() {
     rebuildPOIMarkers();
   }
 
+  function updatePOIPosition(poi) {
+    var all = loadAllPOIs();
+    var list = all[currentMountainRoute.id] || [];
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id === poi.id) {
+        list[i].x = poi.x;
+        list[i].y = poi.y;
+        break;
+      }
+    }
+    saveAllPOIs(all);
+  }
+
   function deletePOI(poiId) {
     var all = loadAllPOIs();
     var list = all[currentMountainRoute.id] || [];
@@ -3603,6 +3623,10 @@ var ThreeMap = (function() {
     hoverPeakIndex = -1;
     isDraggingPeak = false;
     pointerDownOnPeak = false;
+    isDraggingPOI = false;
+    pointerDownOnPOI = false;
+    draggingPOIMarker = null;
+    poiDragMoved = false;
     hidePeakSelectionEffect();
     activeTrailId = null;
     trailDirectionOverrides = {};
@@ -4059,6 +4083,10 @@ var ThreeMap = (function() {
     hoverPeakIndex = -1;
     isDraggingPeak = false;
     pointerDownOnPeak = false;
+    isDraggingPOI = false;
+    pointerDownOnPOI = false;
+    draggingPOIMarker = null;
+    poiDragMoved = false;
     hidePeakSelectionEffect();
     activeTrailId = null;
     trailDirectionOverrides = {};
@@ -4692,8 +4720,13 @@ var ThreeMap = (function() {
     if (e.button === 0 && !editMode && !poiPlacementMode) {
       var poiHit = pickPOIMarker(e.clientX, e.clientY);
       if (poiHit) {
-        var data = poiHit.userData.poiData;
-        showPOIEditPanel(data, false, e.clientX, e.clientY);
+        pointerDownOnPOI = true;
+        draggingPOIMarker = poiHit;
+        poiDragStartX = e.clientX;
+        poiDragStartY = e.clientY;
+        poiDragMoved = false;
+        isDraggingPOI = false;
+        hidePOIEditPanel();
         e.preventDefault();
         e.stopImmediatePropagation();
         return;
@@ -4839,6 +4872,41 @@ var ThreeMap = (function() {
       return;
     }
 
+    if (pointerDownOnPOI && draggingPOIMarker) {
+      var dx = e.clientX - poiDragStartX;
+      var dy = e.clientY - poiDragStartY;
+      var dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > 4) {
+        poiDragMoved = true;
+        isDraggingPOI = true;
+        try { renderer.domElement.setPointerCapture(e.pointerId); } catch(ex) {}
+      }
+      if (isDraggingPOI) {
+        var hitT = pickTerrainPoint(e.clientX, e.clientY);
+        if (hitT) {
+          var poiData = draggingPOIMarker.userData.poiData;
+          poiData.x = hitT.nx;
+          poiData.y = hitT.nz;
+          alignPOIToTerrain(draggingPOIMarker, hitT.nx, hitT.nz);
+          var wpDrag = new THREE.Vector3();
+          draggingPOIMarker.getWorldPosition(wpDrag);
+          var ptypeDrag = poiData.type;
+          var isFlagDrag = (POI_TYPES[ptypeDrag] && (POI_TYPES[ptypeDrag].shape === 'flag' || POI_TYPES[ptypeDrag].shape === 'checkered'));
+          var topOffDrag = isFlagDrag ? 2.9 : 1.0;
+          var beamColorDrag = (ptypeDrag === 'start')
+            ? { core: 0xffffff, mid: 0x88ffaa, glow: 0x44dd66, particle: 0x88ffbb, halo: 0xaaffcc, halo2: 0x66ff99 }
+            : (ptypeDrag === 'end')
+            ? { core: 0xffffff, mid: 0xffaa88, glow: 0xff5533, particle: 0xffbb88, halo: 0xffccaa, halo2: 0xff8866 }
+            : beamColor;
+          showBeamEffectAt(wpDrag, topOffDrag, wpDrag.y, beamColorDrag);
+          renderer.domElement.style.cursor = 'move';
+        }
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+    }
+
     if (!editMode && !poiPlacementMode) {
       var poiHit = pickPOIMarker(e.clientX, e.clientY);
       var peakHit = -1;
@@ -4982,6 +5050,30 @@ var ThreeMap = (function() {
   }
 
   function onTerrainPointerUp(e) {
+    if (isDraggingPOI || pointerDownOnPOI) {
+      var wasDragging = isDraggingPOI;
+      var wasMoved = poiDragMoved;
+      isDraggingPOI = false;
+      pointerDownOnPOI = false;
+      try { renderer.domElement.releasePointerCapture(e.pointerId); } catch(ex) {}
+      if (wasDragging && draggingPOIMarker) {
+        var poiDataUpd = draggingPOIMarker.userData.poiData;
+        updatePOIPosition(poiDataUpd);
+      }
+      draggingPOIMarker = null;
+      poiDragMoved = false;
+      if (wasMoved) {
+        renderer.domElement.style.cursor = 'grab';
+      } else if (!wasMoved && e.button === 0) {
+        var rePoiHit = pickPOIMarker(e.clientX, e.clientY);
+        if (rePoiHit) {
+          var reData = rePoiHit.userData.poiData;
+          showPOIEditPanel(reData, false, e.clientX, e.clientY);
+        }
+      }
+      e.preventDefault();
+      return;
+    }
     if (isDraggingTrail) {
       isDraggingTrail = false;
       pointerDownOnTrail = false;
@@ -6803,6 +6895,10 @@ var ThreeMap = (function() {
     hoverPeakIndex = -1;
     isDraggingPeak = false;
     pointerDownOnPeak = false;
+    isDraggingPOI = false;
+    pointerDownOnPOI = false;
+    draggingPOIMarker = null;
+    poiDragMoved = false;
     hidePeakSelectionEffect();
     activeTrailId = null;
     trailDirectionOverrides = {};
