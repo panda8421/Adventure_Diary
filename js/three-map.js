@@ -4708,6 +4708,18 @@ var ThreeMap = (function() {
     if (enable) {
       editorPanel.style.display = 'block';
       if (editEntryBtn) editEntryBtn.style.display = 'none';
+      if (hoverPOIMarker) {
+        var _phud = hoverPOIMarker.userData;
+        if (_phud.base && _phud.base.material && _phud.base.material.emissive) {
+          _phud.base.material.emissive.setHex(POI_TYPES[_phud.poiData.type].emissive);
+          _phud.base.material.emissiveIntensity = 0.5;
+        }
+        hoverPOIMarker = null;
+      }
+      if (beamTargetType === 'trail') {
+        hoverTrailIndex = -1;
+        hidePeakSelectionEffect();
+      }
       var isDEMEdit = terrainMesh && terrainMesh.userData.isDEM;
       if (isDEMEdit && (editTool === 'raise' || editTool === 'lower' || editTool === 'smooth' || editTool === 'river')) {
         editTool = 'trail';
@@ -4844,6 +4856,15 @@ var ThreeMap = (function() {
         trailDirectDrag = true;
         hoverTrailIndex = trailHitDown;
         rebuildTrailHandles();
+        if (beamTargetType !== 'poi' && beamTargetType !== 'peak') {
+          var tGrpDn = trailHandlesGroup.children[trailHitDown];
+          if (tGrpDn) {
+            var tWpDn = tGrpDn.position.clone();
+            var tBeamDn = { core: 0xffffff, mid: 0x00e5ff, glow: 0x00b8d4, particle: 0x80ffff, halo: 0x80ffff, halo2: 0x40e0ff };
+            showBeamEffectAt(tWpDn, 1.0, tWpDn.y, tBeamDn);
+            beamTargetType = 'trail';
+          }
+        }
         e.preventDefault();
         e.stopImmediatePropagation();
         return;
@@ -5125,6 +5146,17 @@ var ThreeMap = (function() {
 
       if (trailHit !== hoverTrailIndex) {
         hoverTrailIndex = trailHit;
+        if (trailHit >= 0 && !newHoverPOI && peakHit < 0) {
+          var trailGroup = trailHandlesGroup.children[trailHit];
+          if (trailGroup) {
+            var trailWp = trailGroup.position.clone();
+            var trailBeamColor = { core: 0xffffff, mid: 0x00e5ff, glow: 0x00b8d4, particle: 0x80ffff, halo: 0x80ffff, halo2: 0x40e0ff };
+            showBeamEffectAt(trailWp, 1.0, trailWp.y, trailBeamColor);
+            beamTargetType = 'trail';
+          }
+        } else if (trailHit < 0 && !newHoverPOI && peakHit < 0 && beamTargetType === 'trail') {
+          hidePeakSelectionEffect();
+        }
       }
 
       var anyHit = poiHit || peakHit >= 0 || trailHit >= 0;
@@ -5253,7 +5285,72 @@ var ThreeMap = (function() {
         if (wasTrailDirect) {
           saveActiveTrailOnly();
         }
-        renderer.domElement.style.cursor = 'grab';
+        var reHitTrail = pickTrailHandle(e.clientX, e.clientY);
+        var rePoiHit = pickPOIMarker(e.clientX, e.clientY);
+        var rePeakHit = -1;
+        if (!rePoiHit) rePeakHit = pickPeakMesh(e.clientX, e.clientY);
+        hoverTrailIndex = reHitTrail;
+        if (rePoiHit && rePoiHit.userData.poiData && (rePoiHit.userData.poiData.type === 'start' || rePoiHit.userData.poiData.type === 'end')) {
+          hoverPOIMarker = rePoiHit;
+          var rpud = rePoiHit.userData;
+          var rptype = rpud.poiData.type;
+          var rpbeam = (rptype === 'start')
+            ? { core: 0xffffff, mid: 0x88ffaa, glow: 0x44dd66, particle: 0x88ffbb, halo: 0xaaffcc, halo2: 0x66ff99 }
+            : { core: 0xffffff, mid: 0xffaa88, glow: 0xff5533, particle: 0xffbb88, halo: 0xffccaa, halo2: 0xff8866 };
+          if (rpud.base && rpud.base.material && rpud.base.material.emissive) {
+            rpud.base.material.emissive.setHex(0xffffff);
+            rpud.base.material.emissiveIntensity = 1.0;
+          }
+          var rwp = new THREE.Vector3();
+          rePoiHit.getWorldPosition(rwp);
+          var rpdef = POI_TYPES[rptype] || POI_TYPES.note;
+          var rpisFlag = (rpdef.shape === 'flag' || rpdef.shape === 'checkered');
+          showBeamEffectAt(rwp, rpisFlag ? 2.9 : 1.0, rwp.y, rpbeam);
+        } else if (rePeakHit >= 0) {
+          if (hoverPOIMarker) {
+            var hud = hoverPOIMarker.userData;
+            if (hud.base && hud.base.material && hud.base.material.emissive) {
+              hud.base.material.emissive.setHex(POI_TYPES[hud.poiData.type].emissive);
+              hud.base.material.emissiveIntensity = 0.5;
+            }
+            hoverPOIMarker = null;
+          }
+          if (hoverPeakIndex >= 0 && hoverPeakIndex !== rePeakHit) setPeakHighlight(hoverPeakIndex, false);
+          hoverPeakIndex = rePeakHit;
+          selectedPeakIndex = rePeakHit;
+          setPeakHighlight(rePeakHit, true);
+          showPeakSelectionEffect(rePeakHit);
+        } else if (reHitTrail >= 0) {
+          if (hoverPOIMarker) {
+            var hud2 = hoverPOIMarker.userData;
+            if (hud2.base && hud2.base.material && hud2.base.material.emissive) {
+              hud2.base.material.emissive.setHex(POI_TYPES[hud2.poiData.type].emissive);
+              hud2.base.material.emissiveIntensity = 0.5;
+            }
+            hoverPOIMarker = null;
+          }
+          if (hoverPeakIndex >= 0) { setPeakHighlight(hoverPeakIndex, false); hoverPeakIndex = -1; selectedPeakIndex = -1; }
+          var tGrp = trailHandlesGroup.children[reHitTrail];
+          if (tGrp) {
+            var tWp = tGrp.position.clone();
+            var tBeam = { core: 0xffffff, mid: 0x00e5ff, glow: 0x00b8d4, particle: 0x80ffff, halo: 0x80ffff, halo2: 0x40e0ff };
+            showBeamEffectAt(tWp, 1.0, tWp.y, tBeam);
+            beamTargetType = 'trail';
+          }
+        } else {
+          if (hoverPOIMarker) {
+            var hud3 = hoverPOIMarker.userData;
+            if (hud3.base && hud3.base.material && hud3.base.material.emissive) {
+              hud3.base.material.emissive.setHex(POI_TYPES[hud3.poiData.type].emissive);
+              hud3.base.material.emissiveIntensity = 0.5;
+            }
+            hoverPOIMarker = null;
+          }
+          if (hoverPeakIndex >= 0) { setPeakHighlight(hoverPeakIndex, false); hoverPeakIndex = -1; selectedPeakIndex = -1; }
+          hoverTrailIndex = -1;
+          hidePeakSelectionEffect();
+        }
+        renderer.domElement.style.cursor = reHitTrail >= 0 || rePoiHit || rePeakHit >= 0 ? 'pointer' : 'grab';
       }
       return;
     }
@@ -6605,6 +6702,13 @@ var ThreeMap = (function() {
       var isFlagTypePOI = (poiTypeDef.shape === 'flag' || poiTypeDef.shape === 'checkered');
       beamBaseY = wp.y;
       topOffset = isFlagTypePOI ? 2.9 : 1.0;
+    } else if (beamTargetType === 'trail') {
+      var tIdx = isDraggingTrail ? selectedTrailIndex : hoverTrailIndex;
+      if (tIdx < 0 || !trailHandlesGroup || !trailHandlesGroup.children[tIdx]) { hidePeakSelectionEffect(); return; }
+      wp = trailHandlesGroup.children[tIdx].position.clone();
+      beamTargetPos = wp;
+      beamBaseY = wp.y;
+      topOffset = 1.0;
     } else {
       return;
     }
