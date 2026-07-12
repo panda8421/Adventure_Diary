@@ -43,9 +43,15 @@ var ThreeMap = (function() {
   // 路径编辑
   var trailHandlesGroup = null;
   var selectedTrailIndex = -1;
+  var hoverTrailIndex = -1;
   var isDraggingTrail = false;
   var workingTrailPoints = null;
   var pointerDownOnTrail = false;
+  var trailDirectDrag = false;
+  var trailDragStartX = 0;
+  var trailDragStartY = 0;
+  var trailDragMoved = false;
+  var trailHandleAnimTime = 0;
   var activeTrailId = null;
   var workingCustomTrails = null;
   var trailDirectionOverrides = {};
@@ -1351,6 +1357,51 @@ var ThreeMap = (function() {
     // 台顶/POI选中特效脉冲 & 粒子流动
     if (peakBeamCoreMesh && peakBeamCoreMesh.visible) {
       updatePeakSelectionEffect(selectedPeakIndex);
+    }
+
+    // 路径节点呼吸动画
+    trailHandleAnimTime += 0.016;
+    if (trailHandlesGroup && trailHandlesGroup.visible) {
+      var inTEdit = (editMode && editTool === 'trail');
+      var breathSpeed = inTEdit ? 2.5 : 1.2;
+      var breathAmp = inTEdit ? 0.12 : 0.06;
+      var hoverTargetScale = inTEdit ? 1.5 : 1.4;
+      var selectedTargetScale = inTEdit ? 1.6 : 1.5;
+      trailHandlesGroup.children.forEach(function(child) {
+        if (child.userData.isTrailHandleGroup) {
+          var idxH = child.userData.handleIndex;
+          var phase = child.userData.phase || 0;
+          var isHov = (idxH === hoverTrailIndex);
+          var isSel = (idxH === selectedTrailIndex);
+          var tgt = isSel ? selectedTargetScale : (isHov ? hoverTargetScale : 1.0);
+          child.userData.targetScale = tgt;
+          var cur = child.userData.currentScale || tgt;
+          cur += (tgt - cur) * 0.2;
+          child.userData.currentScale = cur;
+          var breathe = 1 + Math.sin(trailHandleAnimTime * breathSpeed + phase) * breathAmp;
+          var s = cur * breathe;
+          child.scale.set(s, s, s);
+          child.children.forEach(function(sub) {
+            if (sub.userData.isTrailRing) {
+              var ringPulse = 1 + Math.sin(trailHandleAnimTime * (breathSpeed * 1.3) + phase) * 0.08;
+              sub.scale.set(ringPulse / breathe, ringPulse / breathe, 1);
+            }
+            if (sub.userData.isTrailCore) {
+              if (sub.material) {
+                var targetOp = (isSel || isHov) ? 1.0 : (inTEdit ? 1.0 : 0.75);
+                var curOp = sub.material.opacity || targetOp;
+                curOp += (targetOp - curOp) * 0.2;
+                sub.material.opacity = curOp;
+                if (isSel || isHov) {
+                  sub.material.color.setHex(0xffffff);
+                } else {
+                  sub.material.color.setHex(0x00e5ff);
+                }
+              }
+            }
+          });
+        }
+      });
     }
 
     // 渲染
@@ -3644,6 +3695,12 @@ var ThreeMap = (function() {
     pointerDownOnPeak = false;
     peakDragMoved = false;
     peakDirectDrag = false;
+    isDraggingTrail = false;
+    pointerDownOnTrail = false;
+    trailDragMoved = false;
+    trailDirectDrag = false;
+    hoverTrailIndex = -1;
+    selectedTrailIndex = -1;
     isDraggingPOI = false;
     pointerDownOnPOI = false;
     draggingPOIMarker = null;
@@ -4106,6 +4163,12 @@ var ThreeMap = (function() {
     pointerDownOnPeak = false;
     peakDragMoved = false;
     peakDirectDrag = false;
+    isDraggingTrail = false;
+    pointerDownOnTrail = false;
+    trailDragMoved = false;
+    trailDirectDrag = false;
+    hoverTrailIndex = -1;
+    selectedTrailIndex = -1;
     isDraggingPOI = false;
     pointerDownOnPOI = false;
     draggingPOIMarker = null;
@@ -4271,6 +4334,7 @@ var ThreeMap = (function() {
       mountainGroup.add(ls);
     }
     rebuildTrailRender();
+    rebuildTrailHandles();
     rebuildRiverRender();
     if (terrain.camps) {
       for (var ci = 0; ci < terrain.camps.length; ci++) {
@@ -4482,7 +4546,7 @@ var ThreeMap = (function() {
         isDraggingRiver = false;
         pointerDownOnRiver = false;
         rebuildRiverRender();
-        if (trailHandlesGroup) trailHandlesGroup.visible = false;
+        rebuildTrailHandles();
         if (peakHandlesGroup) peakHandlesGroup.visible = false;
         if (editMode && controls) controls.enabled = true;
         if (editMode && renderer) renderer.domElement.style.cursor = 'grab';
@@ -4498,7 +4562,7 @@ var ThreeMap = (function() {
         hoverPeakIndex = -1;
         hidePeakSelectionEffect();
         rebuildPeakHandles();
-        if (trailHandlesGroup) trailHandlesGroup.visible = false;
+        rebuildTrailHandles();
         if (riverHandlesGroup) riverHandlesGroup.visible = false;
         if (editMode && controls) controls.enabled = true;
         if (editMode && renderer) renderer.domElement.style.cursor = 'grab';
@@ -4661,13 +4725,13 @@ var ThreeMap = (function() {
         showEditorToast(isDEMEdit ? 'DEM真实地形 · 路径编辑：拖拽控制点移动路径' : '路径编辑：拖拽黄色控制点移动路径 · 空白区域可旋转缩放地图');
       } else if (editTool === 'river') {
         editCursor.visible = false;
-        if (trailHandlesGroup) trailHandlesGroup.visible = false;
+        rebuildTrailHandles();
         if (peakHandlesGroup) peakHandlesGroup.visible = false;
         rebuildRiverRender();
         showEditorToast('河流编辑：拖拽蓝色控制点改河道 · Shift+点击添加点 · 空白区域可旋转缩放地图');
       } else if (editTool === 'peak') {
         editCursor.visible = false;
-        if (trailHandlesGroup) trailHandlesGroup.visible = false;
+        rebuildTrailHandles();
         if (riverHandlesGroup) riverHandlesGroup.visible = false;
         hidePeakSelectionEffect();
         if (hoverPeakIndex >= 0) { setPeakHighlight(hoverPeakIndex, false); }
@@ -4678,7 +4742,7 @@ var ThreeMap = (function() {
         rebuildPeakHandles();
         showEditorToast('台顶编辑：鼠标悬停台顶显示光束 · 拖拽移动位置 · 空白区域可旋转缩放地图');
       } else {
-        if (trailHandlesGroup) trailHandlesGroup.visible = false;
+        rebuildTrailHandles();
         if (riverHandlesGroup) riverHandlesGroup.visible = false;
         hidePeakSelectionEffect();
         if (hoverPeakIndex >= 0) { setPeakHighlight(hoverPeakIndex, false); hoverPeakIndex = -1; }
@@ -4713,7 +4777,7 @@ var ThreeMap = (function() {
       if (editEntryBtn) editEntryBtn.style.display = 'block';
       if (backButton) backButton.style.pointerEvents = 'auto';
       renderer.domElement.style.cursor = 'grab';
-      if (trailHandlesGroup) trailHandlesGroup.visible = false;
+      rebuildTrailHandles();
       if (riverHandlesGroup) riverHandlesGroup.visible = false;
     }
   }
@@ -4765,6 +4829,21 @@ var ThreeMap = (function() {
         peakDirectDrag = true;
         setPeakHighlight(peakHitDown, true);
         showPeakSelectionEffect(peakHitDown);
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+      var trailHitDown = pickTrailHandle(e.clientX, e.clientY);
+      if (trailHitDown >= 0) {
+        pointerDownOnTrail = true;
+        selectedTrailIndex = trailHitDown;
+        trailDragStartX = e.clientX;
+        trailDragStartY = e.clientY;
+        trailDragMoved = false;
+        isDraggingTrail = false;
+        trailDirectDrag = true;
+        hoverTrailIndex = trailHitDown;
+        rebuildTrailHandles();
         e.preventDefault();
         e.stopImmediatePropagation();
         return;
@@ -4963,12 +5042,34 @@ var ThreeMap = (function() {
       }
     }
 
+    if (pointerDownOnTrail && trailDirectDrag && !editMode) {
+      var dxT = e.clientX - trailDragStartX;
+      var dyT = e.clientY - trailDragStartY;
+      var distT = Math.sqrt(dxT * dxT + dyT * dyT);
+      if (distT > 4) {
+        trailDragMoved = true;
+        isDraggingTrail = true;
+        try { renderer.domElement.setPointerCapture(e.pointerId); } catch(ex) {}
+      }
+      if (isDraggingTrail) {
+        dragTrailPoint(e.clientX, e.clientY);
+        renderer.domElement.style.cursor = 'move';
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+    }
+
     if (!editMode && !poiPlacementMode) {
       var poiHit = pickPOIMarker(e.clientX, e.clientY);
       var peakHit = -1;
+      var trailHit = -1;
       var poiHitMarker = poiHit;
       if (!poiHit) {
         peakHit = pickPeakMesh(e.clientX, e.clientY);
+        if (peakHit < 0) {
+          trailHit = pickTrailHandle(e.clientX, e.clientY);
+        }
       }
 
       var newHoverPOI = null;
@@ -5004,7 +5105,7 @@ var ThreeMap = (function() {
           var isFlagType2 = (pdef.shape === 'flag' || pdef.shape === 'checkered');
           var topOff = isFlagType2 ? 2.9 : 1.0;
           showBeamEffectAt(wp, topOff, wp.y, beamColorConfig);
-        } else if (peakHit < 0) {
+        } else if (peakHit < 0 && trailHit < 0) {
           hidePeakSelectionEffect();
         }
       }
@@ -5021,7 +5122,13 @@ var ThreeMap = (function() {
           hidePeakSelectionEffect();
         }
       }
-      renderer.domElement.style.cursor = (poiHit || peakHit >= 0) ? 'pointer' : 'grab';
+
+      if (trailHit !== hoverTrailIndex) {
+        hoverTrailIndex = trailHit;
+      }
+
+      var anyHit = poiHit || peakHit >= 0 || trailHit >= 0;
+      renderer.domElement.style.cursor = anyHit ? 'pointer' : 'grab';
       return;
     }
 
@@ -5130,11 +5237,24 @@ var ThreeMap = (function() {
       e.preventDefault();
       return;
     }
-    if (isDraggingTrail) {
+    if (isDraggingTrail || (pointerDownOnTrail && trailDirectDrag)) {
+      var wasTrailDragging = isDraggingTrail;
+      var wasTrailMoved = trailDragMoved;
+      var wasTrailDirect = trailDirectDrag;
       isDraggingTrail = false;
       pointerDownOnTrail = false;
+      trailDirectDrag = false;
+      trailDragMoved = false;
       try { renderer.domElement.releasePointerCapture(e.pointerId); } catch(ex) {}
       e.preventDefault();
+      if (wasTrailDragging) {
+        rebuildTrailRender();
+        rebuildTrailHandles();
+        if (wasTrailDirect) {
+          saveActiveTrailOnly();
+        }
+        renderer.domElement.style.cursor = 'grab';
+      }
       return;
     }
     if (isDraggingRiver) {
@@ -5568,33 +5688,88 @@ var ThreeMap = (function() {
       var c = trailHandlesGroup.children[0];
       trailHandlesGroup.remove(c);
       if (c.geometry) c.geometry.dispose();
-      if (c.material) { if (c.material.map) c.material.map.dispose(); c.material.dispose(); }
+      if (c.material) {
+        if (Array.isArray(c.material)) {
+          c.material.forEach(function(m) { if (m.map) m.map.dispose(); m.dispose(); });
+        } else {
+          if (c.material.map) c.material.map.dispose(); c.material.dispose();
+        }
+      }
     }
-    trailHandlesGroup.visible = (editMode && editTool === 'trail');
-    if (!trailHandlesGroup.visible) return;
+    var inTrailEdit = (editMode && editTool === 'trail');
+    trailHandlesGroup.visible = true;
     var pts = ensureWorkingTrailPoints();
     var size = (terrainMesh && terrainMesh.userData.size) || 60;
-    var hMatU = new THREE.MeshStandardMaterial({ color: 0xffaa00, emissive: 0xff6600, emissiveIntensity: 0.8, roughness: 0.3 });
-    var hMatS = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffaa00, emissiveIntensity: 1.5, roughness: 0.2 });
+    var coreR = inTrailEdit ? 0.35 : 0.22;
+    var ringR = inTrailEdit ? 0.9 : 0.55;
+    var baseOpacity = inTrailEdit ? 1.0 : 0.75;
+    var hoverScale = inTrailEdit ? 1.5 : 1.4;
+    var selectedScale = inTrailEdit ? 1.6 : 1.5;
+    var coreColor = 0x00e5ff;
+    var glowColor = 0x00b8d4;
+    var whiteColor = 0xffffff;
+
+    var coreMatNormal = new THREE.MeshBasicMaterial({ color: coreColor, transparent: true, opacity: baseOpacity, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending });
+    var ringMatNormal = new THREE.MeshBasicMaterial({ color: glowColor, transparent: true, opacity: baseOpacity * 0.45, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+    var coreMatHover = new THREE.MeshBasicMaterial({ color: whiteColor, transparent: true, opacity: 1.0, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending });
+    var ringMatHover = new THREE.MeshBasicMaterial({ color: coreColor, transparent: true, opacity: 0.75, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+    var coreMatSelected = new THREE.MeshBasicMaterial({ color: whiteColor, transparent: true, opacity: 1.0, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending });
+    var ringMatSelected = new THREE.MeshBasicMaterial({ color: coreColor, transparent: true, opacity: 0.9, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+
+    var segR = 20;
     for (var i = 0; i < pts.length; i++) {
       var pt = pts[i];
       var wx = (pt.x - 0.5) * size;
       var wz = (pt.y - 0.5) * size;
-      var wy = getVertexHeightAt(wx, wz) + 0.6;
-      var geo = new THREE.SphereGeometry(0.45, 16, 16);
-      var mesh = new THREE.Mesh(geo, i === selectedTrailIndex ? hMatS : hMatU);
-      mesh.position.set(wx, wy, wz);
-      if (i === selectedTrailIndex) mesh.scale.setScalar(1.3);
-      mesh.userData.isTrailHandle = true;
-      mesh.userData.handleIndex = i;
-      mesh.renderOrder = 997;
-      trailHandlesGroup.add(mesh);
+      var wy = getVertexHeightAt(wx, wz) + 0.8;
+      var isSel = (i === selectedTrailIndex);
+      var isHv = (i === hoverTrailIndex);
+      var handleGroup = new THREE.Group();
+      handleGroup.position.set(wx, wy, wz);
+      handleGroup.userData.isTrailHandle = true;
+      handleGroup.userData.handleIndex = i;
+      handleGroup.userData.isTrailHandleGroup = true;
+      handleGroup.renderOrder = 997;
+
+      var coreGeo = new THREE.SphereGeometry(coreR, segR, segR);
+      var coreMesh = new THREE.Mesh(coreGeo, isSel ? coreMatSelected : (isHv ? coreMatHover : coreMatNormal));
+      coreMesh.userData.isTrailCore = true;
+      coreMesh.renderOrder = 998;
+      handleGroup.add(coreMesh);
+
+      var ringGeo = new THREE.RingGeometry(ringR * 0.55, ringR, segR);
+      var ringMesh = new THREE.Mesh(ringGeo, isSel ? ringMatSelected : (isHv ? ringMatHover : ringMatNormal));
+      ringMesh.rotation.x = -Math.PI / 2;
+      ringMesh.position.y = 0.05;
+      ringMesh.userData.isTrailRing = true;
+      ringMesh.renderOrder = 997;
+      handleGroup.add(ringMesh);
+
+      var ring2Geo = new THREE.RingGeometry(ringR * 0.25, ringR * 0.5, segR);
+      var ring2Mat = new THREE.MeshBasicMaterial({ color: coreColor, transparent: true, opacity: isSel ? 0.5 : (isHv ? 0.45 : baseOpacity * 0.3), depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+      var ring2Mesh = new THREE.Mesh(ring2Geo, ring2Mat);
+      ring2Mesh.rotation.x = -Math.PI / 2;
+      ring2Mesh.position.y = 0.06;
+      ring2Mesh.userData.isTrailRing2 = true;
+      ring2Mesh.renderOrder = 997;
+      handleGroup.add(ring2Mesh);
+
+      var targetScale = isSel ? selectedScale : (isHv ? hoverScale : 1.0);
+      handleGroup.userData.baseScale = 1.0;
+      handleGroup.userData.targetScale = targetScale;
+      handleGroup.userData.currentScale = targetScale;
+      handleGroup.userData.phase = Math.random() * Math.PI * 2;
+      handleGroup.scale.setScalar(targetScale);
+
+      trailHandlesGroup.add(handleGroup);
+
       if (pt.name) {
         var lc = document.createElement('canvas');
         var lctx = lc.getContext('2d');
         lc.width = 200; lc.height = 36;
         lctx.font = 'bold 14px -apple-system,"PingFang SC",sans-serif';
-        lctx.fillStyle = 'rgba(255,200,80,0.95)'; lctx.textAlign = 'center';
+        lctx.fillStyle = inTrailEdit ? 'rgba(0,229,255,0.95)' : 'rgba(255,220,100,0.9)';
+        lctx.textAlign = 'center';
         lctx.shadowColor = 'rgba(0,0,0,0.9)'; lctx.shadowBlur = 4;
         lctx.fillText(pt.name, 100, 20);
         var lt = new THREE.CanvasTexture(lc);
@@ -5602,22 +5777,26 @@ var ThreeMap = (function() {
         var ls = new THREE.Sprite(lm);
         ls.position.set(wx, wy + 1.2, wz);
         ls.scale.set(4, 0.7, 1);
+        ls.userData.isTrailLabel = true;
         trailHandlesGroup.add(ls);
       }
     }
-    var linePts = [];
-    for (var li = 0; li < pts.length; li++) {
-      var lwx = (pts[li].x - 0.5) * size;
-      var lwz = (pts[li].y - 0.5) * size;
-      var lwy = getVertexHeightAt(lwx, lwz) + 0.6;
-      linePts.push(new THREE.Vector3(lwx, lwy, lwz));
-    }
-    if (linePts.length >= 2) {
-      var lineGeo = new THREE.BufferGeometry().setFromPoints(linePts);
-      var lineMat = new THREE.LineBasicMaterial({ color: 0xffcc44, transparent: true, opacity: 0.7, depthTest: false });
-      var line = new THREE.Line(lineGeo, lineMat);
-      line.renderOrder = 996;
-      trailHandlesGroup.add(line);
+    if (inTrailEdit) {
+      var linePts = [];
+      for (var li = 0; li < pts.length; li++) {
+        var lwx = (pts[li].x - 0.5) * size;
+        var lwz = (pts[li].y - 0.5) * size;
+        var lwy = getVertexHeightAt(lwx, lwz) + 0.8;
+        linePts.push(new THREE.Vector3(lwx, lwy, lwz));
+      }
+      if (linePts.length >= 2) {
+        var lineGeo = new THREE.BufferGeometry().setFromPoints(linePts);
+        var lineMat = new THREE.LineBasicMaterial({ color: 0x00e5ff, transparent: true, opacity: 0.5, depthTest: false });
+        var line = new THREE.Line(lineGeo, lineMat);
+        line.renderOrder = 996;
+        line.userData.isTrailEditLine = true;
+        trailHandlesGroup.add(line);
+      }
     }
   }
 
@@ -5769,12 +5948,25 @@ var ThreeMap = (function() {
     editMouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
     editMouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
     editRaycaster.setFromCamera(editMouse, camera);
-    var handles = [];
+    var handleMeshes = [];
+    var handleGroupMap = {};
     trailHandlesGroup.traverse(function(obj) {
-      if (obj.userData && obj.userData.isTrailHandle) handles.push(obj);
+      if (obj.userData && (obj.userData.isTrailCore || obj.userData.isTrailRing || obj.userData.isTrailRing2)) {
+        handleMeshes.push(obj);
+        var g = obj;
+        while (g && g.parent && !g.userData.isTrailHandleGroup) g = g.parent;
+        if (g && g.userData.isTrailHandleGroup) {
+          handleGroupMap[obj.uuid] = g;
+        }
+      }
     });
-    var hits = editRaycaster.intersectObjects(handles, false);
-    if (hits.length > 0) return hits[0].object.userData.handleIndex;
+    var hits = editRaycaster.intersectObjects(handleMeshes, false);
+    if (hits.length > 0) {
+      var hitObj = hits[0].object;
+      var grp = handleGroupMap[hitObj.uuid];
+      if (grp && grp.userData.handleIndex !== undefined) return grp.userData.handleIndex;
+      if (hitObj.userData.handleIndex !== undefined) return hitObj.userData.handleIndex;
+    }
     return -1;
   }
 
@@ -5930,13 +6122,88 @@ var ThreeMap = (function() {
   }
 
   function dragTrailPoint(clientX, clientY) {
-    if (selectedTrailIndex < 0 || !workingTrailPoints) return;
+    if (selectedTrailIndex < 0) return;
+    ensureWorkingTrailPoints();
+    if (!workingTrailPoints) return;
     var hit = getTerrainHitPoint(clientX, clientY);
     if (!hit) return;
     var uv = worldToUV(hit.x, hit.z);
     workingTrailPoints[selectedTrailIndex].x = uv.x;
     workingTrailPoints[selectedTrailIndex].y = uv.y;
     rebuildTrailRender();
+    updateTrailHandlePositions();
+  }
+
+  function updateTrailHandlePositions() {
+    if (!trailHandlesGroup || !trailHandlesGroup.visible) return;
+    var pts = workingTrailPoints;
+    if (!pts) return;
+    var size = getTerrainSize();
+    var labelIdx = 0;
+    trailHandlesGroup.children.forEach(function(child) {
+      if (child.userData.isTrailLabel) {
+        child.userData.labelIndex = labelIdx++;
+      }
+    });
+    var idx = 0;
+    var labelGroups = [];
+    trailHandlesGroup.children.forEach(function(child) {
+      if (child.userData.isTrailHandleGroup) {
+        if (idx < pts.length) {
+          var pt = pts[idx];
+          var wx = (pt.x - 0.5) * size;
+          var wz = (pt.y - 0.5) * size;
+          var wy = getVertexHeightAt(wx, wz) + 0.8;
+          child.position.set(wx, wy, wz);
+        }
+        idx++;
+      } else if (child.userData.isTrailLabel && child.userData.labelIndex !== undefined) {
+        labelGroups.push(child);
+      }
+    });
+    labelGroups.forEach(function(ls) {
+      var li = ls.userData.labelIndex;
+      if (li < pts.length) {
+        var lp = pts[li];
+        var lwx = (lp.x - 0.5) * size;
+        var lwz = (lp.y - 0.5) * size;
+        var lwy = getVertexHeightAt(lwx, lwz) + 2.0;
+        ls.position.set(lwx, lwy, lwz);
+      }
+    });
+    rebuildTrailEditLine();
+  }
+
+  function rebuildTrailEditLine() {
+    if (!trailHandlesGroup) return;
+    var pts = workingTrailPoints;
+    if (!pts || pts.length < 2) return;
+    var oldLine = null;
+    trailHandlesGroup.children.forEach(function(child) {
+      if (child.userData.isTrailEditLine) oldLine = child;
+    });
+    if (!(editMode && editTool === 'trail')) {
+      if (oldLine) trailHandlesGroup.remove(oldLine);
+      return;
+    }
+    var size = getTerrainSize();
+    var linePts = [];
+    for (var i = 0; i < pts.length; i++) {
+      var wx = (pts[i].x - 0.5) * size;
+      var wz = (pts[i].y - 0.5) * size;
+      var wy = getVertexHeightAt(wx, wz) + 0.8;
+      linePts.push(new THREE.Vector3(wx, wy, wz));
+    }
+    if (oldLine) {
+      oldLine.geometry.dispose();
+      trailHandlesGroup.remove(oldLine);
+    }
+    var lineGeo = new THREE.BufferGeometry().setFromPoints(linePts);
+    var lineMat = new THREE.LineBasicMaterial({ color: 0x00e5ff, transparent: true, opacity: 0.5, depthTest: false });
+    var line = new THREE.Line(lineGeo, lineMat);
+    line.renderOrder = 996;
+    line.userData.isTrailEditLine = true;
+    trailHandlesGroup.add(line);
   }
 
   function ensureWorkingPeakPositions() {
@@ -6518,6 +6785,7 @@ var ThreeMap = (function() {
       selectedTrailIndex = insertIdx;
     }
     rebuildTrailRender();
+    rebuildTrailHandles();
     showEditorToast('已添加路径点');
   }
 
@@ -6527,6 +6795,7 @@ var ThreeMap = (function() {
     pts.splice(idx, 1);
     if (selectedTrailIndex >= pts.length) selectedTrailIndex = pts.length - 1;
     rebuildTrailRender();
+    rebuildTrailHandles();
     showEditorToast('已删除路径点');
   }
 
@@ -6976,6 +7245,12 @@ var ThreeMap = (function() {
     pointerDownOnPeak = false;
     peakDragMoved = false;
     peakDirectDrag = false;
+    isDraggingTrail = false;
+    pointerDownOnTrail = false;
+    trailDragMoved = false;
+    trailDirectDrag = false;
+    hoverTrailIndex = -1;
+    selectedTrailIndex = -1;
     isDraggingPOI = false;
     pointerDownOnPOI = false;
     draggingPOIMarker = null;
