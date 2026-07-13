@@ -2432,6 +2432,27 @@ var ThreeMap = (function() {
       group.add(ls);
     }
 
+    var lockSprite = null;
+    if (poi.locked) {
+      var lkC = document.createElement('canvas');
+      lkC.width = 48; lkC.height = 48;
+      var lkCtx = lkC.getContext('2d');
+      lkCtx.font = 'bold 34px sans-serif';
+      lkCtx.textAlign = 'center';
+      lkCtx.textBaseline = 'middle';
+      lkCtx.shadowColor = 'rgba(0,0,0,0.8)';
+      lkCtx.shadowBlur = 6;
+      lkCtx.fillText('🔒', 24, 24);
+      var lkTex = new THREE.CanvasTexture(lkC);
+      var lkMat = new THREE.SpriteMaterial({ map: lkTex, transparent: true, depthTest: false, depthWrite: false });
+      lockSprite = new THREE.Sprite(lkMat);
+      lockSprite.position.y = isFlagType ? 2.5 : 2.0;
+      lockSprite.position.x = isFlagType ? 0.8 : 0.5;
+      lockSprite.scale.set(0.6, 0.6, 1);
+      lockSprite.userData.isPOILock = true;
+      group.add(lockSprite);
+    }
+
     group.userData.isPOI = true;
     group.userData.poiId = poi.id;
     group.userData.poiData = poi;
@@ -2440,6 +2461,7 @@ var ThreeMap = (function() {
     group.userData.ring = ring;
     group.userData.pulse = pulse;
     group.userData.label = ls || null;
+    group.userData.lockIcon = lockSprite;
 
     if (isFlagType) {
       group.scale.setScalar(1.6);
@@ -2561,9 +2583,11 @@ var ThreeMap = (function() {
     panel.style.left = Math.min(screenX + 20, window.innerWidth - 300) + 'px';
     panel.style.top = Math.min(screenY - 20, window.innerHeight - 300) + 'px';
 
+    var isLocked = !!poi.locked;
     panel.innerHTML = ''
-      + '<div style="font-size:14px;font-weight:600;color:' + 'rgb(' + parseInt(typeDef.color.toString(16).padStart(6,'0').substr(0,2),16) + ',' + parseInt(typeDef.color.toString(16).padStart(6,'0').substr(2,2),16) + ',' + parseInt(typeDef.color.toString(16).padStart(6,'0').substr(4,2),16) + ')' + ';margin-bottom:10px;display:flex;align-items:center;gap:6px;">'
-      +   (isNew ? '📍 添加标记' : '✏️ 编辑标记')
+      + '<div style="font-size:14px;font-weight:600;color:' + 'rgb(' + parseInt(typeDef.color.toString(16).padStart(6,'0').substr(0,2),16) + ',' + parseInt(typeDef.color.toString(16).padStart(6,'0').substr(2,2),16) + ',' + parseInt(typeDef.color.toString(16).padStart(6,'0').substr(4,2),16) + ')' + ';margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;">'
+      +   '<span style="display:flex;align-items:center;gap:6px;">' + (isNew ? '📍 添加标记' : '✏️ 编辑标记') + '</span>'
+      +   (isNew ? '' : '<button id="poi-lock-btn" title="' + (isLocked ? '已锁定：位置不可拖动，点击解锁' : '未锁定：位置可拖动，点击锁定') + '" style="background:' + (isLocked ? 'rgba(255,180,50,0.25)' : 'rgba(60,80,100,0.3)') + ';border:1px solid ' + (isLocked ? 'rgba(255,200,80,0.6)' : 'rgba(100,130,160,0.4)') + ';border-radius:6px;color:' + (isLocked ? '#ffd060' : '#9ab') + ';cursor:pointer;font-size:16px;padding:4px 8px;line-height:1;transition:all 0.2s;">' + (isLocked ? '🔒' : '🔓') + '</button>')
       + '</div>'
       + '<div style="margin-bottom:10px;">'
       +   '<div style="margin-bottom:5px;font-size:12px;color:#9ab;">类型</div>'
@@ -2645,6 +2669,21 @@ var ThreeMap = (function() {
       exitPOIPlacementMode();
     });
 
+    var lockBtn = panel.querySelector('#poi-lock-btn');
+    if (lockBtn) {
+      lockBtn.addEventListener('click', function() {
+        isLocked = !isLocked;
+        poi.locked = isLocked;
+        lockBtn.textContent = isLocked ? '🔒' : '🔓';
+        lockBtn.title = isLocked ? '已锁定：位置不可拖动，点击解锁' : '未锁定：位置可拖动，点击锁定';
+        lockBtn.style.background = isLocked ? 'rgba(255,180,50,0.25)' : 'rgba(60,80,100,0.3)';
+        lockBtn.style.borderColor = isLocked ? 'rgba(255,200,80,0.6)' : 'rgba(100,130,160,0.4)';
+        lockBtn.style.color = isLocked ? '#ffd060' : '#9ab';
+        updatePOILockVisual(poi.id, isLocked);
+        updatePOILock(poi.id, isLocked);
+      });
+    }
+
     nameInput.addEventListener('keydown', function(e) {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
@@ -2713,11 +2752,61 @@ var ThreeMap = (function() {
         list[i].type = poi.type;
         list[i].name = poi.name;
         list[i].desc = poi.desc;
+        list[i].locked = !!poi.locked;
         break;
       }
     }
     saveAllPOIs(all);
     rebuildPOIMarkers();
+  }
+
+  function updatePOILock(poiId, locked) {
+    var all = loadAllPOIs();
+    var list = all[currentMountainRoute.id] || [];
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id === poiId) {
+        list[i].locked = locked;
+        break;
+      }
+    }
+    saveAllPOIs(all);
+  }
+
+  function updatePOILockVisual(poiId, locked) {
+    if (!poiGroup) return;
+    for (var i = 0; i < poiGroup.children.length; i++) {
+      var g = poiGroup.children[i];
+      if (g.userData && g.userData.poiId === poiId) {
+        if (g.userData.lockIcon) {
+          g.remove(g.userData.lockIcon);
+          g.userData.lockIcon = null;
+        }
+        if (locked) {
+          var isFlagType = !!(g.userData.icon && g.userData.poiData && (POI_TYPES[g.userData.poiData.type] || {}).shape);
+          var pType = g.userData.poiData ? (POI_TYPES[g.userData.poiData.type] || POI_TYPES.note) : POI_TYPES.note;
+          var isF = (pType.shape === 'flag' || pType.shape === 'checkered');
+          var lkC = document.createElement('canvas');
+          lkC.width = 48; lkC.height = 48;
+          var lkCtx = lkC.getContext('2d');
+          lkCtx.font = 'bold 34px sans-serif';
+          lkCtx.textAlign = 'center';
+          lkCtx.textBaseline = 'middle';
+          lkCtx.shadowColor = 'rgba(0,0,0,0.8)';
+          lkCtx.shadowBlur = 6;
+          lkCtx.fillText('🔒', 24, 24);
+          var lkTex = new THREE.CanvasTexture(lkC);
+          var lkMat = new THREE.SpriteMaterial({ map: lkTex, transparent: true, depthTest: false, depthWrite: false });
+          var lockSprite = new THREE.Sprite(lkMat);
+          lockSprite.position.y = isF ? 2.5 : 2.0;
+          lockSprite.position.x = isF ? 0.8 : 0.5;
+          lockSprite.scale.set(0.6, 0.6, 1);
+          lockSprite.userData.isPOILock = true;
+          g.add(lockSprite);
+          g.userData.lockIcon = lockSprite;
+        }
+        break;
+      }
+    }
   }
 
   function updatePOIPosition(poi) {
@@ -4827,8 +4916,10 @@ var ThreeMap = (function() {
     if (e.button === 0 && !editMode && !poiPlacementMode) {
       var poiHit = pickPOIMarker(e.clientX, e.clientY);
       if (poiHit) {
+        var hitPoiData = poiHit.userData.poiData;
+        var poiIsLocked = !!(hitPoiData && hitPoiData.locked);
         pointerDownOnPOI = true;
-        draggingPOIMarker = poiHit;
+        draggingPOIMarker = poiIsLocked ? null : poiHit;
         poiDragStartX = e.clientX;
         poiDragStartY = e.clientY;
         poiDragMoved = false;
@@ -5168,7 +5259,8 @@ var ThreeMap = (function() {
       }
 
       var anyHit = poiHit || peakHit >= 0 || trailHit >= 0;
-      renderer.domElement.style.cursor = anyHit ? 'pointer' : 'grab';
+      var lockedPoiHover = !!(poiHit && poiHit.userData.poiData && poiHit.userData.poiData.locked);
+      renderer.domElement.style.cursor = lockedPoiHover ? 'not-allowed' : (anyHit ? 'pointer' : 'grab');
       return;
     }
 
