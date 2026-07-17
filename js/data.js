@@ -52,7 +52,7 @@ const routes = [
     elevation: 2800,
     maxAltitude: 3061,
     center: { lng: 113.580, lat: 39.060 },
-    viewRadiusKm: 12,
+    viewRadiusKm: 15,
     useDEM: true,
     description: '五台山大朝台，是中国最经典的徒步路线之一。从鸿门岩出发，依次穿越东台、北台、中台、西台、南台五座台顶，全程约52公里。\n\n北台叶斗峰海拔3061米，是华北屋脊。徒步过程中可欣赏高山草甸、云海日出、古刹梵音。七月的五台山，草甸上开满金莲花，景色壮美。\n\n这条路线对体能要求较高，需连续徒步2-3天。台顶之间温差大，即使是夏季也需携带冲锋衣和保暖层。台顶寺庙可提供简单的食宿，但条件简陋。',
     images: [
@@ -63,7 +63,7 @@ const routes = [
     gearIds: ['backpack-osprey', 'boots-salomon', 'poles-blackdiamond', 'headlamp-petzl', 'bottle-nalgene', 'jacket-arc'],
     terrain: {
       style: 'alpine_meadow',
-      verticalScale: 2.0,
+      verticalScale: 2.5,
       baseHeight: 1400,
       useRealisticTerrain: false,
       ridgeConnections: [[0,1],[1,2],[2,3],[2,4],[3,4]],
