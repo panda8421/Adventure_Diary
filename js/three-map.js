@@ -6999,11 +6999,19 @@ var ThreeMap = (function() {
         var dist = dx * dx + dz * dz;
         if (dist < bestDist) { bestDist = dist; bestT = t; }
       }
-      var insertIdx = 1;
-      for (var j = 1; j < pts.length; j++) {
-        if (bestT >= (j - 1) / (pts.length - 1)) insertIdx = j;
+      var insertIdx;
+      if (bestT >= 0.9) {
+        insertIdx = pts.length;
+      } else if (bestT <= 0.1) {
+        insertIdx = 0;
+      } else {
+        insertIdx = 1;
+        for (var j = 1; j < pts.length; j++) {
+          if (bestT >= (j - 1) / (pts.length - 1)) insertIdx = j;
+        }
       }
-      pts.splice(insertIdx, 0, { x: uv.x, y: uv.y, name: '途经点' });
+      var newName = insertIdx === 0 ? '起点' : (insertIdx === pts.length ? '终点' : '途经点');
+      pts.splice(insertIdx, 0, { x: uv.x, y: uv.y, name: newName });
       selectedTrailIndex = insertIdx;
     }
     rebuildTrailRender();
