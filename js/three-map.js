@@ -240,18 +240,21 @@ var ThreeMap = (function() {
     renderer.domElement.addEventListener('wheel', onTerrainWheel, { passive: false });
     window.addEventListener('pointerup', onTerrainPointerUp, true);
     // 捕获阶段拦截mousedown(兼容非PointerEvent环境)和touchstart
-    // 地形编辑模式下完全阻止OrbitControls响应
-    // 路径/河流编辑模式下：右键退出编辑；点击线/控制点时拦截以进行拖拽，否则允许地图旋转缩放
+    // 路径/河流/台顶编辑模式下：点击线/控制点时拦截以进行拖拽，右键允许平移地图，不退出编辑
+    // 地形笔刷模式下：完全阻止OrbitControls响应，右键退出编辑
     renderer.domElement.addEventListener('mousedown', function(e) {
       if (!editMode || viewMode !== 'mountain') return;
+      var isPathTool = (editTool === 'trail' || editTool === 'river' || editTool === 'peak');
       if (e.button === 2) {
+        if (isPathTool) {
+          return;
+        }
         e.stopImmediatePropagation();
         e.preventDefault();
         toggleEditMode(false);
         return;
       }
       if (e.button !== 0) return;
-      var isPathTool = (editTool === 'trail' || editTool === 'river' || editTool === 'peak');
       if (!isPathTool) {
         e.stopImmediatePropagation();
         e.preventDefault();
@@ -4972,6 +4975,10 @@ var ThreeMap = (function() {
 
     if (!editMode) return;
     if (e.button === 2) {
+      var isPathTool2 = (editTool === 'trail' || editTool === 'river' || editTool === 'peak');
+      if (isPathTool2) {
+        return;
+      }
       e.preventDefault();
       e.stopImmediatePropagation();
       toggleEditMode(false);
@@ -5280,7 +5287,7 @@ var ThreeMap = (function() {
           e.preventDefault();
           e.stopImmediatePropagation();
           renderer.domElement.style.cursor = 'move';
-        } else {
+        } else if (!(e.buttons & ~1)) {
           var orbitActive = (e.buttons & 1) && !isDraggingTrail;
           if (!orbitActive) {
             var hitIdx = pickTrailHandle(e.clientX, e.clientY);
@@ -5297,7 +5304,7 @@ var ThreeMap = (function() {
           e.preventDefault();
           e.stopImmediatePropagation();
           renderer.domElement.style.cursor = 'move';
-        } else {
+        } else if (!(e.buttons & ~1)) {
           var orbitActiveR = (e.buttons & 1) && !isDraggingRiver;
           if (!orbitActiveR) {
             var hitIdxR = pickRiverHandle(e.clientX, e.clientY);
@@ -5314,7 +5321,7 @@ var ThreeMap = (function() {
           e.preventDefault();
           e.stopImmediatePropagation();
           renderer.domElement.style.cursor = 'move';
-        } else {
+        } else if (!(e.buttons & ~1)) {
           var hitIdxP = pickPeakMesh(e.clientX, e.clientY);
           if (hitIdxP !== hoverPeakIndex) {
             if (hoverPeakIndex >= 0) setPeakHighlight(hoverPeakIndex, false);
@@ -5515,13 +5522,16 @@ var ThreeMap = (function() {
     pointerDownOnRiver = false;
     pointerDownOnPeak = false;
     if (editMode && e.button === 2) {
-      toggleEditMode(false);
+      var isPathToolUp = (editTool === 'trail' || editTool === 'river' || editTool === 'peak');
+      if (!isPathToolUp) {
+        toggleEditMode(false);
+      }
     }
   }
 
   function onTerrainWheel(e) {
     if (!editMode || viewMode !== 'mountain' || !terrainMesh) return;
-    if (editTool === 'trail' || editTool === 'river') return;
+    if (editTool === 'trail' || editTool === 'river' || editTool === 'peak') return;
     e.preventDefault();
     e.stopPropagation();
     var delta = e.deltaY > 0 ? 1.08 : 1 / 1.08;
