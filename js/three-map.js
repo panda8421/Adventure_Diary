@@ -6241,19 +6241,19 @@ var ThreeMap = (function() {
       var cx = 32, cy = 32;
       var glowGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, 28);
       glowGrad.addColorStop(0, 'rgba(255,255,255,1)');
-      glowGrad.addColorStop(0.08, 'rgba(220,255,255,1)');
-      glowGrad.addColorStop(0.2, 'rgba(100,240,255,0.9)');
-      glowGrad.addColorStop(0.45, 'rgba(0,210,255,0.5)');
-      glowGrad.addColorStop(0.75, 'rgba(0,170,255,0.15)');
-      glowGrad.addColorStop(1, 'rgba(0,120,255,0)');
+      glowGrad.addColorStop(0.08, 'rgba(255,220,255,1)');
+      glowGrad.addColorStop(0.2, 'rgba(220,120,255,0.95)');
+      glowGrad.addColorStop(0.45, 'rgba(180,60,255,0.6)');
+      glowGrad.addColorStop(0.75, 'rgba(140,30,220,0.2)');
+      glowGrad.addColorStop(1, 'rgba(100,0,180,0)');
       ctx.fillStyle = glowGrad;
       ctx.beginPath();
       ctx.arc(cx, cy, 28, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = 'rgba(240,255,255,1)';
+      ctx.strokeStyle = 'rgba(255,230,255,1)';
       ctx.lineCap = 'round';
       ctx.lineWidth = 3;
-      ctx.shadowColor = 'rgba(0,230,255,1)';
+      ctx.shadowColor = 'rgba(200,80,255,1)';
       ctx.shadowBlur = 10;
       ctx.beginPath();
       ctx.moveTo(cx, cy - 12); ctx.lineTo(cx, cy + 12);
@@ -6299,7 +6299,7 @@ var ThreeMap = (function() {
       };
       var sMat = new THREE.SpriteMaterial({
         map: starTex,
-        color: 0x99f8ff,
+        color: 0xdd88ff,
         transparent: true,
         opacity: pBaseAlpha,
         depthWrite: false,
