@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "timestamp": 1784349605290,
+  "timestamp": 1784349640444,
   "routeStats": {},
   "routeRatings": {},
   "terrainMods": {
@@ -9,18 +9,18 @@
       "trailNameOverrides": {
         "default": "bxhxchchnc"
       },
-      "lastSync": 1784305846938
+      "lastSync": 1784349605290
     },
     "wugongshan": {
       "activeTrailId": "default",
       "trailNameOverrides": {
         "default": "cgjfgjgfjf"
       },
-      "lastSync": 1784305846938
+      "lastSync": 1784349605290
     },
     "wutaishan": {
       "localModified": 1784349596363,
-      "lastSync": 1784305846938,
+      "lastSync": 1784349605290,
       "trailPoints": [
         {
           "x": 0.6616392022353693,
