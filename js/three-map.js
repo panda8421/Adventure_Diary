@@ -56,6 +56,12 @@ var ThreeMap = (function() {
   var workingCustomTrails = null;
   var trailDirectionOverrides = {};
   var trailCompletedStatus = {};
+  var trailParticleSystem = null;
+  var trailParticleData = [];
+  var trailParticleCurve = null;
+  var trailParticleDir = 1;
+  var trailParticleTexture = null;
+  var trailParticleLastTime = 0;
   var trailNameOverrides = {};
   var deletedDefaultTrailIds = {};
   var onTrailChanged = null;
@@ -1407,6 +1413,30 @@ var ThreeMap = (function() {
           });
         }
       });
+    }
+
+    // 轨迹粒子流动动画
+    if (trailParticleCurve && trailParticleData.length > 0) {
+      var pNow = Date.now();
+      if (!trailParticleLastTime) trailParticleLastTime = pNow;
+      var pDt = Math.min((pNow - trailParticleLastTime) / 1000, 0.05);
+      trailParticleLastTime = pNow;
+      var pTime = pNow * 0.001;
+      var dir = trailParticleDir;
+      for (var pdi = 0; pdi < trailParticleData.length; pdi++) {
+        var pd = trailParticleData[pdi];
+        if (!pd.sprite) continue;
+        pd.t += pd.speed * dir * pDt;
+        if (pd.t > 1) pd.t -= 1;
+        if (pd.t < 0) pd.t += 1;
+        var ppt = trailParticleCurve.getPointAt(pd.t);
+        var flicker = 0.3 + 0.7 * Math.abs(Math.sin(pTime * pd.flickerFreq + pd.phase));
+        var pulse = 0.8 + 0.2 * Math.sin(pTime * pd.pulseFreq + pd.phase * 1.3);
+        pd.sprite.position.set(ppt.x, ppt.y + 0.55, ppt.z);
+        pd.sprite.material.opacity = pd.baseAlpha * flicker;
+        var s = pd.baseSize * pulse;
+        pd.sprite.scale.set(s, s, 1);
+      }
     }
 
     // 渲染
@@ -6106,17 +6136,20 @@ var ThreeMap = (function() {
     var oldTrails = [];
     if (mountainGroup) {
       mountainGroup.traverse(function(obj) {
-        if (obj.userData && (obj.userData.isTrail || obj.userData.isTrailDot || obj.userData.isTrailLabel)) {
+        if (obj.userData && (obj.userData.isTrail || obj.userData.isTrailDot || obj.userData.isTrailLabel || obj.userData.isTrailParticle)) {
           oldTrails.push(obj);
         }
       });
     }
+    trailParticleSystem = null;
+    trailParticleData = [];
+    trailParticleCurve = null;
     for (var i = 0; i < oldTrails.length; i++) {
       var o = oldTrails[i];
       if (o.parent) o.parent.remove(o);
       if (o.geometry) o.geometry.dispose();
       if (o.material) {
-        if (o.material.map) o.material.map.dispose();
+        if (o.material.map && !o.userData.isTrailParticle) o.material.map.dispose();
         o.material.dispose();
       }
     }
@@ -6183,27 +6216,83 @@ var ThreeMap = (function() {
 
     var activeT = getActiveTrail();
     var trailDir = (activeT && activeT.direction === -1) ? -1 : 1;
-    var arrowCount = Math.max(4, Math.min(12, Math.floor(trailSrc.length * 1.5)));
-    for (var ai = 1; ai <= arrowCount; ai++) {
-      var at = ai / (arrowCount + 1);
-      var aPos = trailCurve.getPointAt(at);
-      var aTan = trailCurve.getTangentAt(at).clone();
-      aTan.y = 0;
-      aTan.normalize();
-      if (aTan.lengthSq() < 0.01) aTan.set(1, 0, 0);
-      if (trailDir === -1) aTan.negate();
-      var arrowGeo = new THREE.ConeGeometry(0.22, 0.55, 8);
-      var arrowMat = new THREE.MeshBasicMaterial({ color: 0xffee88, transparent: true, opacity: 0.92, depthTest: false, depthWrite: false });
-      var arrowMesh = new THREE.Mesh(arrowGeo, arrowMat);
-      arrowMesh.position.copy(aPos);
-      arrowMesh.position.y += 0.55;
-      var coneDefaultDir = new THREE.Vector3(0, 1, 0);
-      var q = new THREE.Quaternion().setFromUnitVectors(coneDefaultDir, aTan);
-      arrowMesh.quaternion.copy(q);
-      arrowMesh.renderOrder = 1000;
-      arrowMesh.userData.isTrail = true;
-      mountainGroup.add(arrowMesh);
+
+    function getTrailStarTexture() {
+      if (trailParticleTexture) return trailParticleTexture;
+      var c = document.createElement('canvas');
+      c.width = 64; c.height = 64;
+      var ctx = c.getContext('2d');
+      var cx = 32, cy = 32;
+      var glowGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, 30);
+      glowGrad.addColorStop(0, 'rgba(255,255,255,1)');
+      glowGrad.addColorStop(0.15, 'rgba(255,245,200,0.9)');
+      glowGrad.addColorStop(0.35, 'rgba(255,220,100,0.5)');
+      glowGrad.addColorStop(0.6, 'rgba(255,200,60,0.15)');
+      glowGrad.addColorStop(1, 'rgba(255,180,50,0)');
+      ctx.fillStyle = glowGrad;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 30, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.lineCap = 'round';
+      ctx.lineWidth = 2.5;
+      ctx.shadowColor = 'rgba(255,240,180,0.8)';
+      ctx.shadowBlur = 6;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - 14); ctx.lineTo(cx, cy + 14);
+      ctx.moveTo(cx - 14, cy); ctx.lineTo(cx + 14, cy);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = 'rgba(255,255,255,1)';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+      var tex = new THREE.CanvasTexture(c);
+      tex.needsUpdate = true;
+      trailParticleTexture = tex;
+      return tex;
     }
+
+    var particleCount = 28;
+    trailParticleData = [];
+    var starTex = getTrailStarTexture();
+    for (var pi = 0; pi < particleCount; pi++) {
+      var pT = pi / particleCount + (Math.random() - 0.5) * 0.02;
+      var pSpeed = 0.32 + Math.random() * 0.18;
+      var pPhase = Math.random() * Math.PI * 2;
+      var pSize = 0.8 + Math.random() * 0.5;
+      var pBaseAlpha = 0.5 + Math.random() * 0.4;
+      var pData = {
+        t: pT,
+        speed: pSpeed,
+        phase: pPhase,
+        baseSize: pSize,
+        baseAlpha: pBaseAlpha,
+        flickerFreq: 2.0 + Math.random() * 2.0,
+        pulseFreq: 2.5 + Math.random() * 1.5,
+        sprite: null
+      };
+      var sMat = new THREE.SpriteMaterial({
+        map: starTex,
+        color: 0xfff0cc,
+        transparent: true,
+        opacity: pBaseAlpha,
+        depthWrite: false,
+        depthTest: false,
+        blending: THREE.AdditiveBlending
+      });
+      var sprite = new THREE.Sprite(sMat);
+      sprite.scale.set(pSize, pSize, 1);
+      sprite.renderOrder = 1001;
+      sprite.userData.isTrailParticle = true;
+      var pt0 = trailCurve.getPointAt(((pT % 1) + 1) % 1);
+      sprite.position.set(pt0.x, pt0.y + 0.55, pt0.z);
+      mountainGroup.add(sprite);
+      pData.sprite = sprite;
+      trailParticleData.push(pData);
+    }
+    trailParticleCurve = trailCurve;
+    trailParticleDir = trailDir;
   }
 
   function pickTerrainPoint(clientX, clientY) {
