@@ -88,6 +88,8 @@ var ThreeMap = (function() {
   var peakHaloMesh = null;
   var peakParticles = [];
   var peakOrigEmissive = [];
+  var peaksLocked = false;
+  var peakLockIcons = [];
 
   var beamTargetType = null;
   var beamTargetPos = null;
@@ -273,7 +275,7 @@ var ThreeMap = (function() {
         hitHandle = pickRiverHandle(e.clientX, e.clientY) >= 0;
         hitLine = pickRiverLine(e.clientX, e.clientY);
       } else if (editTool === 'peak') {
-        hitHandle = pickPeakMesh(e.clientX, e.clientY) >= 0;
+        hitHandle = peaksLocked ? false : (pickPeakMesh(e.clientX, e.clientY) >= 0);
       }
       if (hitHandle || hitLine) {
         e.stopImmediatePropagation();
@@ -298,7 +300,7 @@ var ThreeMap = (function() {
         hitHandle = pickRiverHandle(t.clientX, t.clientY) >= 0;
         hitLine = pickRiverLine(t.clientX, t.clientY);
       } else if (editTool === 'peak') {
-        hitHandle = pickPeakMesh(t.clientX, t.clientY) >= 0;
+        hitHandle = peaksLocked ? false : (pickPeakMesh(t.clientX, t.clientY) >= 0);
       }
       if (hitHandle || hitLine) {
         e.stopImmediatePropagation();
@@ -2833,6 +2835,7 @@ var ThreeMap = (function() {
       try { var raw = localStorage.getItem(key); if (raw) prev = JSON.parse(raw); } catch(e) {}
       var data = prev || {};
       data.peakPositions = workingPeakPositions.map(function(p) { return { x: p.x, y: p.y }; });
+      data.peaksLocked = !!peaksLocked;
       data.localModified = Date.now();
       if (prev && prev.lastSync) data.lastSync = prev.lastSync;
       localStorage.setItem(key, JSON.stringify(data));
@@ -3352,6 +3355,7 @@ var ThreeMap = (function() {
       trailCompletedStatus = {};
       trailNameOverrides = {};
       deletedDefaultTrailIds = {};
+      peaksLocked = false;
       if (savedMod) {
         if (savedMod.riverPoints && savedMod.riverPoints.length >= 2) {
           workingRiverPoints = savedMod.riverPoints.map(function(p) {
@@ -3380,6 +3384,7 @@ var ThreeMap = (function() {
         if (savedMod.trailCompletedStatus) trailCompletedStatus = JSON.parse(JSON.stringify(savedMod.trailCompletedStatus));
         if (savedMod.trailNameOverrides) trailNameOverrides = JSON.parse(JSON.stringify(savedMod.trailNameOverrides));
         if (savedMod.deletedDefaultTrailIds) deletedDefaultTrailIds = JSON.parse(JSON.stringify(savedMod.deletedDefaultTrailIds));
+        if (savedMod.peaksLocked !== undefined) peaksLocked = !!savedMod.peaksLocked;
         if (savedMod.peakPositions && savedMod.peakPositions.length > 0) {
           workingPeakPositions = savedMod.peakPositions.map(function(p) { return { x: p.x, y: p.y }; });
           for (var ppi = 0; ppi < t.peaks.length && ppi < workingPeakPositions.length; ppi++) {
@@ -3781,6 +3786,7 @@ var ThreeMap = (function() {
     riverDepth = 1.5;
     workingCustomTrails = null;
     workingPeakPositions = null;
+    peaksLocked = false;
     selectedPeakIndex = -1;
     hoverPeakIndex = -1;
     isDraggingPeak = false;
@@ -3936,6 +3942,7 @@ var ThreeMap = (function() {
     trailCompletedStatus = {};
     trailNameOverrides = {};
     deletedDefaultTrailIds = {};
+    peaksLocked = false;
     if (savedMod) {
       if (savedMod.riverPoints && savedMod.riverPoints.length >= 2) {
         workingRiverPoints = savedMod.riverPoints.map(function(p) {
@@ -3964,6 +3971,7 @@ var ThreeMap = (function() {
       if (savedMod.deletedDefaultTrailIds) {
         deletedDefaultTrailIds = JSON.parse(JSON.stringify(savedMod.deletedDefaultTrailIds));
       }
+      if (savedMod.peaksLocked !== undefined) peaksLocked = !!savedMod.peaksLocked;
       if (savedMod.peakPositions && savedMod.peakPositions.length > 0) {
         workingPeakPositions = savedMod.peakPositions.map(function(p) { return { x: p.x, y: p.y }; });
       }
@@ -4143,6 +4151,7 @@ var ThreeMap = (function() {
         return { x: p.x, y: p.y };
       });
     }
+    data.peaksLocked = !!peaksLocked;
     if (workingCustomTrails && workingCustomTrails.length > 0) {
       data.customTrails = workingCustomTrails.map(function(t) {
         return { id: t.id, name: t.name, direction: t.direction, points: t.points.map(function(p) { return { x: p.x, y: p.y, name: p.name }; }) };
@@ -4249,6 +4258,7 @@ var ThreeMap = (function() {
     riverDepth = 1.5;
     workingCustomTrails = null;
     workingPeakPositions = null;
+    peaksLocked = false;
     selectedPeakIndex = -1;
     hoverPeakIndex = -1;
     isDraggingPeak = false;
@@ -4283,6 +4293,8 @@ var ThreeMap = (function() {
     if (rwVal) rwVal.textContent = riverWidth.toFixed(1);
     if (rdSlider) rdSlider.value = riverDepth;
     if (rdVal) rdVal.textContent = riverDepth.toFixed(1);
+    updatePeakLockButton();
+    updatePeakLockIcons();
     showEditorToast('已重置为默认');
   }
 
@@ -4598,6 +4610,7 @@ var ThreeMap = (function() {
       + '    <div>🖱️ 拖拽紫色控制点移动台顶</div>'
       + '    <div>💾 保存后位置生效</div>'
       + '  </div>'
+      + '  <button id="peak-lock-btn" style="width:100%;margin-top:8px;padding:6px 8px;background:rgba(60,80,100,0.3);border:1px solid rgba(100,130,160,0.4);border-radius:5px;color:#9ab;cursor:pointer;font-size:12px;">🔓 台顶未锁定（可拖动）</button>'
       + '</div>'
       + '<div style="display:flex;gap:6px;margin-bottom:8px;">'
       + '  <button id="edit-save" style="flex:1;padding:7px;background:rgba(100,200,140,0.25);border:1px solid rgba(100,220,160,0.5);border-radius:6px;color:#88ffbb;cursor:pointer;font-size:12px;">💾 保存</button>'
@@ -4659,6 +4672,8 @@ var ThreeMap = (function() {
         if (riverHandlesGroup) riverHandlesGroup.visible = false;
         if (editMode && controls) controls.enabled = true;
         if (editMode && renderer) renderer.domElement.style.cursor = 'grab';
+        updatePeakLockButton();
+        updatePeakLockIcons();
       } else {
         if (terrainTools) terrainTools.style.display = 'block';
         if (trailTools) trailTools.style.display = 'none';
@@ -4741,6 +4756,61 @@ var ThreeMap = (function() {
         if (!confirm('确定要清空整条路径吗？此操作不可撤销，清空后需重新绘制路径。')) return;
         clearAllTrailPoints();
       });
+    }
+    var peakLockBtn = panel.querySelector('#peak-lock-btn');
+    if (peakLockBtn) {
+      peakLockBtn.addEventListener('click', function() {
+        peaksLocked = !peaksLocked;
+        updatePeakLockButton();
+        updatePeakLockIcons();
+        if (peaksLocked) {
+          isDraggingPeak = false;
+          pointerDownOnPeak = false;
+          peakDirectDrag = false;
+          selectedPeakIndex = -1;
+          hoverPeakIndex = -1;
+          hidePeakSelectionEffect();
+          rebuildPeakHandles();
+        }
+        savePeakPositionsOnly();
+        try {
+          var lKey = getStorageKey(currentMountainRoute.id);
+          var lPrev = null;
+          try { var lRaw = localStorage.getItem(lKey); if (lRaw) lPrev = JSON.parse(lRaw); } catch(e) {}
+          var lData = lPrev || {};
+          lData.peaksLocked = !!peaksLocked;
+          lData.localModified = Date.now();
+          if (lPrev && lPrev.lastSync) lData.lastSync = lPrev.lastSync;
+          localStorage.setItem(lKey, JSON.stringify(lData));
+          if (typeof SyncModule !== 'undefined' && SyncModule.markDirty) SyncModule.markDirty('terrainMods');
+        } catch(e) {}
+        showEditorToast(peaksLocked ? '🔒 台顶已锁定，不可拖动' : '🔓 台顶已解锁，可以拖动');
+      });
+    }
+  }
+
+  function updatePeakLockButton() {
+    if (!editorPanel) return;
+    var btn = editorPanel.querySelector('#peak-lock-btn');
+    if (!btn) return;
+    if (peaksLocked) {
+      btn.textContent = '🔒 台顶已锁定（不可拖动）';
+      btn.style.background = 'rgba(255,180,50,0.25)';
+      btn.style.borderColor = 'rgba(255,200,80,0.6)';
+      btn.style.color = '#ffd060';
+    } else {
+      btn.textContent = '🔓 台顶未锁定（可拖动）';
+      btn.style.background = 'rgba(60,80,100,0.3)';
+      btn.style.borderColor = 'rgba(100,130,160,0.4)';
+      btn.style.color = '#9ab';
+    }
+  }
+
+  function updatePeakLockIcons() {
+    for (var i = 0; i < peakLockIcons.length; i++) {
+      if (peakLockIcons[i]) {
+        peakLockIcons[i].visible = peaksLocked;
+      }
     }
   }
 
@@ -4934,6 +5004,9 @@ var ThreeMap = (function() {
       }
       var peakHitDown = pickPeakMesh(e.clientX, e.clientY);
       if (peakHitDown >= 0) {
+        if (peaksLocked) {
+          return;
+        }
         pointerDownOnPeak = true;
         selectedPeakIndex = peakHitDown;
         peakDragStartX = e.clientX;
@@ -5056,6 +5129,10 @@ var ThreeMap = (function() {
     if (editTool === 'peak') {
       var hitIdxP = pickPeakMesh(e.clientX, e.clientY);
       if (hitIdxP >= 0) {
+        if (peaksLocked) {
+          showEditorToast('🔒 台顶已锁定，请先解锁再拖动');
+          return;
+        }
         selectedPeakIndex = hitIdxP;
         isDraggingPeak = true;
         pointerDownOnPeak = true;
@@ -5151,7 +5228,7 @@ var ThreeMap = (function() {
       }
     }
 
-    if (pointerDownOnPeak && peakDirectDrag && !editMode) {
+    if (pointerDownOnPeak && peakDirectDrag && !editMode && !peaksLocked) {
       var dxP = e.clientX - peakDragStartX;
       var dyP = e.clientY - peakDragStartY;
       var distP = Math.sqrt(dxP * dxP + dyP * dyP);
@@ -5239,7 +5316,7 @@ var ThreeMap = (function() {
 
       if (peakHit !== hoverPeakIndex && !newHoverPOI) {
         if (hoverPeakIndex >= 0) setPeakHighlight(hoverPeakIndex, false);
-        hoverPeakIndex = peakHit;
+        hoverPeakIndex = peaksLocked ? -1 : peakHit;
         if (hoverPeakIndex >= 0) {
           setPeakHighlight(hoverPeakIndex, true);
           selectedPeakIndex = hoverPeakIndex;
@@ -5265,9 +5342,10 @@ var ThreeMap = (function() {
         }
       }
 
-      var anyHit = poiHit || peakHit >= 0 || trailHit >= 0;
+      var anyHit = poiHit || (!peaksLocked && peakHit >= 0) || trailHit >= 0;
       var lockedPoiHover = !!(poiHit && poiHit.userData.poiData && poiHit.userData.poiData.locked);
-      renderer.domElement.style.cursor = lockedPoiHover ? 'not-allowed' : (anyHit ? 'pointer' : 'grab');
+      var lockedPeakHover = peaksLocked && peakHit >= 0;
+      renderer.domElement.style.cursor = (lockedPoiHover || lockedPeakHover) ? 'not-allowed' : (anyHit ? 'pointer' : 'grab');
       return;
     }
 
@@ -5316,13 +5394,20 @@ var ThreeMap = (function() {
         return;
       }
       if (editTool === 'peak') {
-        if (isDraggingPeak) {
+        if (isDraggingPeak && !peaksLocked) {
           dragPeakPoint(e.clientX, e.clientY);
           e.preventDefault();
           e.stopImmediatePropagation();
           renderer.domElement.style.cursor = 'move';
         } else if (!(e.buttons & ~1)) {
           var hitIdxP = pickPeakMesh(e.clientX, e.clientY);
+          if (peaksLocked && hitIdxP >= 0) {
+            renderer.domElement.style.cursor = 'not-allowed';
+            if (hoverPeakIndex >= 0) setPeakHighlight(hoverPeakIndex, false);
+            hoverPeakIndex = -1;
+            hidePeakSelectionEffect();
+            return;
+          }
           if (hitIdxP !== hoverPeakIndex) {
             if (hoverPeakIndex >= 0) setPeakHighlight(hoverPeakIndex, false);
             hoverPeakIndex = hitIdxP;
@@ -5395,7 +5480,7 @@ var ThreeMap = (function() {
         var reHitTrail = pickTrailHandle(e.clientX, e.clientY);
         var rePoiHit = pickPOIMarker(e.clientX, e.clientY);
         var rePeakHit = -1;
-        if (!rePoiHit) rePeakHit = pickPeakMesh(e.clientX, e.clientY);
+        if (!rePoiHit && !peaksLocked) rePeakHit = pickPeakMesh(e.clientX, e.clientY);
         hoverTrailIndex = reHitTrail;
         if (rePoiHit && rePoiHit.userData.poiData && (rePoiHit.userData.poiData.type === 'start' || rePoiHit.userData.poiData.type === 'end')) {
           hoverPOIMarker = rePoiHit;
@@ -5457,7 +5542,9 @@ var ThreeMap = (function() {
           hoverTrailIndex = -1;
           hidePeakSelectionEffect();
         }
-        renderer.domElement.style.cursor = reHitTrail >= 0 || rePoiHit || rePeakHit >= 0 ? 'pointer' : 'grab';
+        var lockedPeakUp = peaksLocked && !rePoiHit && (pickPeakMesh(e.clientX, e.clientY) >= 0);
+        var lockedPoiUp = !!(rePoiHit && rePoiHit.userData.poiData && rePoiHit.userData.poiData.locked);
+        renderer.domElement.style.cursor = (lockedPeakUp || lockedPoiUp) ? 'not-allowed' : (reHitTrail >= 0 || rePoiHit || rePeakHit >= 0 ? 'pointer' : 'grab');
       }
       return;
     }
@@ -6470,7 +6557,7 @@ var ThreeMap = (function() {
     if (!mountainGroup || !currentMountainRoute || !currentMountainRoute.terrain) return;
     var oldPeaks = [];
     mountainGroup.traverse(function(obj) {
-      if (obj.userData && (obj.userData.isPeak || obj.userData.isPeakLabel)) {
+      if (obj.userData && (obj.userData.isPeak || obj.userData.isPeakLabel || obj.userData.isPeakLockIcon)) {
         oldPeaks.push(obj);
       }
     });
@@ -6482,11 +6569,30 @@ var ThreeMap = (function() {
     }
     peakMeshesRefs = [];
     peakLabelRefs = [];
+    peakLockIcons = [];
     peakOrigEmissive = [];
     var terrain = currentMountainRoute.terrain;
     var wps = ensureWorkingPeakPositions();
     var isWutaishan = currentMountainRoute.id === 'wutaishan';
     var size = getTerrainSize();
+
+    var lockCanvas = null;
+    function getLockTexture() {
+      if (lockCanvas) return lockCanvas.tex;
+      var c = document.createElement('canvas');
+      c.width = 64; c.height = 64;
+      var ctx = c.getContext('2d');
+      ctx.font = '36px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.shadowColor = 'rgba(0,0,0,0.9)';
+      ctx.shadowBlur = 8;
+      ctx.fillText('🔒', 32, 32);
+      var tex = new THREE.CanvasTexture(c);
+      lockCanvas = { canvas: c, tex: tex };
+      return tex;
+    }
+
     for (var pi = 0; pi < terrain.peaks.length; pi++) {
       var peak = terrain.peaks[pi];
       var wp = getPeakWorldPos(pi);
@@ -6547,6 +6653,18 @@ var ThreeMap = (function() {
       ls.userData.peakIndex = pi;
       mountainGroup.add(ls);
       peakLabelRefs[pi] = ls;
+
+      if (isWutaishan) {
+        var lockMat = new THREE.SpriteMaterial({ map: getLockTexture(), transparent: true, depthTest: false, depthWrite: false });
+        var lockSprite = new THREE.Sprite(lockMat);
+        lockSprite.position.set(wp.x, labelY - 1.2, wp.z);
+        lockSprite.scale.set(1.0, 1.0, 1);
+        lockSprite.userData.isPeakLockIcon = true;
+        lockSprite.userData.peakIndex = pi;
+        lockSprite.visible = peaksLocked;
+        mountainGroup.add(lockSprite);
+        peakLockIcons[pi] = lockSprite;
+      }
     }
   }
 
@@ -7495,6 +7613,7 @@ var ThreeMap = (function() {
     pointerDownOnRiver = false;
     workingCustomTrails = null;
     workingPeakPositions = null;
+    peaksLocked = false;
     selectedPeakIndex = -1;
     hoverPeakIndex = -1;
     isDraggingPeak = false;
@@ -7692,6 +7811,8 @@ var ThreeMap = (function() {
         trailNameOverrides = {};
         deletedDefaultTrailIds = {};
         workingRiverPoints = null;
+        workingPeakPositions = null;
+        peaksLocked = false;
         var savedMod = loadAllTerrainMod(routeId);
         if (savedMod) {
           if (savedMod.riverPoints && savedMod.riverPoints.length >= 2) {
@@ -7721,11 +7842,17 @@ var ThreeMap = (function() {
           if (savedMod.deletedDefaultTrailIds) {
             deletedDefaultTrailIds = JSON.parse(JSON.stringify(savedMod.deletedDefaultTrailIds));
           }
+          if (savedMod.peaksLocked !== undefined) peaksLocked = !!savedMod.peaksLocked;
+          if (savedMod.peakPositions && savedMod.peakPositions.length > 0) {
+            workingPeakPositions = savedMod.peakPositions.map(function(p) { return { x: p.x, y: p.y }; });
+          }
         }
         initActiveTrail();
         if (workingRiverPoints && workingRiverPoints.length >= 2) {
           rebuildRiverRender();
         }
+        rebuildPeakMarkers();
+        rebuildPOIMarkers();
         if (mountainGroup) rebuildTrailRender();
         if (onTrailChanged) onTrailChanged();
       }
@@ -7749,6 +7876,7 @@ var ThreeMap = (function() {
     workingRiverPoints = null;
     workingCustomTrails = null;
     workingPeakPositions = null;
+    peaksLocked = false;
     riverWidth = 2.5;
     riverDepth = 1.5;
     hidePeakSelectionEffect();
@@ -7783,6 +7911,7 @@ var ThreeMap = (function() {
       if (savedMod.trailCompletedStatus) trailCompletedStatus = JSON.parse(JSON.stringify(savedMod.trailCompletedStatus));
       if (savedMod.trailNameOverrides) trailNameOverrides = JSON.parse(JSON.stringify(savedMod.trailNameOverrides));
       if (savedMod.deletedDefaultTrailIds) deletedDefaultTrailIds = JSON.parse(JSON.stringify(savedMod.deletedDefaultTrailIds));
+      if (savedMod.peaksLocked !== undefined) peaksLocked = !!savedMod.peaksLocked;
       if (savedMod.peakPositions && savedMod.peakPositions.length > 0) {
         workingPeakPositions = savedMod.peakPositions.map(function(p) { return { x: p.x, y: p.y }; });
       }
