@@ -6217,6 +6217,7 @@ var ThreeMap = (function() {
     var activeT = getActiveTrail();
     var trailDir = (activeT && activeT.direction === -1) ? -1 : 1;
 
+    trailParticleTexture = null;
     function getTrailStarTexture() {
       if (trailParticleTexture) return trailParticleTexture;
       var c = document.createElement('canvas');
@@ -6225,19 +6226,19 @@ var ThreeMap = (function() {
       var cx = 32, cy = 32;
       var glowGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, 30);
       glowGrad.addColorStop(0, 'rgba(255,255,255,1)');
-      glowGrad.addColorStop(0.15, 'rgba(255,245,200,0.9)');
-      glowGrad.addColorStop(0.35, 'rgba(255,220,100,0.5)');
-      glowGrad.addColorStop(0.6, 'rgba(255,200,60,0.15)');
-      glowGrad.addColorStop(1, 'rgba(255,180,50,0)');
+      glowGrad.addColorStop(0.12, 'rgba(180,255,255,0.95)');
+      glowGrad.addColorStop(0.3, 'rgba(0,230,255,0.65)');
+      glowGrad.addColorStop(0.55, 'rgba(0,180,255,0.25)');
+      glowGrad.addColorStop(1, 'rgba(0,120,255,0)');
       ctx.fillStyle = glowGrad;
       ctx.beginPath();
       ctx.arc(cx, cy, 30, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.strokeStyle = 'rgba(220,255,255,0.95)';
       ctx.lineCap = 'round';
-      ctx.lineWidth = 2.5;
-      ctx.shadowColor = 'rgba(255,240,180,0.8)';
-      ctx.shadowBlur = 6;
+      ctx.lineWidth = 2.8;
+      ctx.shadowColor = 'rgba(0,220,255,0.9)';
+      ctx.shadowBlur = 8;
       ctx.beginPath();
       ctx.moveTo(cx, cy - 14); ctx.lineTo(cx, cy + 14);
       ctx.moveTo(cx - 14, cy); ctx.lineTo(cx + 14, cy);
@@ -6245,7 +6246,7 @@ var ThreeMap = (function() {
       ctx.shadowBlur = 0;
       ctx.fillStyle = 'rgba(255,255,255,1)';
       ctx.beginPath();
-      ctx.arc(cx, cy, 3.5, 0, Math.PI * 2);
+      ctx.arc(cx, cy, 4, 0, Math.PI * 2);
       ctx.fill();
       var tex = new THREE.CanvasTexture(c);
       tex.needsUpdate = true;
@@ -6258,23 +6259,23 @@ var ThreeMap = (function() {
     var starTex = getTrailStarTexture();
     for (var pi = 0; pi < particleCount; pi++) {
       var pT = pi / particleCount + (Math.random() - 0.5) * 0.02;
-      var pSpeed = 0.16 + Math.random() * 0.09;
+      var pSpeed = 0.055 + Math.random() * 0.035;
       var pPhase = Math.random() * Math.PI * 2;
-      var pSize = 0.8 + Math.random() * 0.5;
-      var pBaseAlpha = 0.5 + Math.random() * 0.4;
+      var pSize = 0.9 + Math.random() * 0.5;
+      var pBaseAlpha = 0.6 + Math.random() * 0.35;
       var pData = {
         t: pT,
         speed: pSpeed,
         phase: pPhase,
         baseSize: pSize,
         baseAlpha: pBaseAlpha,
-        flickerFreq: 2.0 + Math.random() * 2.0,
-        pulseFreq: 2.5 + Math.random() * 1.5,
+        flickerFreq: 1.8 + Math.random() * 1.8,
+        pulseFreq: 2.0 + Math.random() * 1.2,
         sprite: null
       };
       var sMat = new THREE.SpriteMaterial({
         map: starTex,
-        color: 0xfff0cc,
+        color: 0x66f0ff,
         transparent: true,
         opacity: pBaseAlpha,
         depthWrite: false,
