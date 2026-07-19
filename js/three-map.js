@@ -2834,6 +2834,7 @@ var ThreeMap = (function() {
         list[i].name = poi.name;
         list[i].desc = poi.desc;
         list[i].locked = !!poi.locked;
+        list[i].updatedAt = Date.now();
         break;
       }
     }
@@ -2847,6 +2848,7 @@ var ThreeMap = (function() {
     for (var i = 0; i < list.length; i++) {
       if (list[i].id === poiId) {
         list[i].locked = locked;
+        list[i].updatedAt = Date.now();
         break;
       }
     }
@@ -2897,6 +2899,7 @@ var ThreeMap = (function() {
       if (list[i].id === poi.id) {
         list[i].x = poi.x;
         list[i].y = poi.y;
+        list[i].updatedAt = Date.now();
         break;
       }
     }
@@ -5550,9 +5553,7 @@ var ThreeMap = (function() {
       if (wasTrailDragging) {
         rebuildTrailRender();
         rebuildTrailHandles();
-        if (wasTrailDirect) {
-          saveActiveTrailOnly();
-        }
+        saveActiveTrailOnly();
         var reHitTrail = pickTrailHandle(e.clientX, e.clientY);
         var rePoiHit = pickPOIMarker(e.clientX, e.clientY);
         var rePeakHit = -1;
@@ -8076,6 +8077,15 @@ var ThreeMap = (function() {
     }
 
     initActiveTrail();
+    if (savedMod && savedMod.trailPoints && savedMod.trailPoints.length > 0) {
+      workingTrailPoints = savedMod.trailPoints.map(function(p) {
+        if (isDEM && p.lng !== undefined && p.lat !== undefined && typeof dem !== 'undefined' && dem) {
+          var pn = lngLatToNormalizedXY(p.lng, p.lat, dem);
+          return { x: pn.x, y: pn.y, name: p.name };
+        }
+        return { x: p.x, y: p.y, name: p.name };
+      });
+    }
     rebuildTrailsAndMarks();
     rebuildRiverRender();
     if (workingPeakPositions) {

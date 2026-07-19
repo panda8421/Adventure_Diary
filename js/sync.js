@@ -145,11 +145,28 @@ var SyncModule = (function() {
         }
         for (var rid3 in lp) {
           if (!lp.hasOwnProperty(rid3)) continue;
-          if (!mergedP[rid3]) mergedP[rid3] = [];
-          var cloudIds = {};
-          for (var ci = 0; ci < (cloud.pois[rid3] || []).length; ci++) { cloudIds[(cloud.pois[rid3] || [])[ci].id] = true; }
+          if (!mergedP[rid3]) {
+            mergedP[rid3] = [];
+          }
+          var cloudMap = {};
+          for (var ci = 0; ci < (cloud.pois[rid3] || []).length; ci++) {
+            var cp = (cloud.pois[rid3] || [])[ci];
+            cloudMap[cp.id] = ci;
+          }
           for (var li = 0; li < lp[rid3].length; li++) {
-            if (!cloudIds[lp[rid3][li].id]) mergedP[rid3].push(lp[rid3][li]);
+            var lpItem = lp[rid3][li];
+            if (cloudMap[lpItem.id] !== undefined) {
+              var cloudIdx = cloudMap[lpItem.id];
+              var cloudItem = mergedP[rid3][cloudIdx];
+              var localNewer = lpItem.updatedAt && (!cloudItem.updatedAt || lpItem.updatedAt > cloudItem.updatedAt);
+              var localMoved = (lpItem.x !== cloudItem.x || lpItem.y !== cloudItem.y);
+              var localChanged = lpItem.locked !== cloudItem.locked || lpItem.name !== cloudItem.name || lpItem.desc !== cloudItem.desc;
+              if (localNewer || localMoved || localChanged) {
+                mergedP[rid3][cloudIdx] = Object.assign({}, cloudItem, lpItem);
+              }
+            } else {
+              mergedP[rid3].push(lpItem);
+            }
           }
         }
         localStorage.setItem(POIS_KEY, JSON.stringify(mergedP));
