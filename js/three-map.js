@@ -66,6 +66,10 @@ var ThreeMap = (function() {
   var _pTan = new THREE.Vector3();
   var _pNorm = new THREE.Vector3();
   var _pBinorm = new THREE.Vector3();
+  var _sQuat = new THREE.Quaternion();
+  var _sY = new THREE.Vector3(0, 1, 0);
+  var _sTanA = new THREE.Vector3();
+  var _sCA = new THREE.Vector3();
   var trailNameOverrides = {};
   var deletedDefaultTrailIds = {};
   var onTrailChanged = null;
@@ -1419,7 +1423,7 @@ var ThreeMap = (function() {
       });
     }
 
-    // 轨迹粒子流动动画（管内流动）
+    // 轨迹段条流动动画（管内发光段流动）
     if (trailParticleCurve && trailParticleData.length > 0) {
       var pNow = Date.now();
       if (!trailParticleLastTime) trailParticleLastTime = pNow;
@@ -1429,28 +1433,28 @@ var ThreeMap = (function() {
       var dir = trailParticleDir;
       for (var pdi = 0; pdi < trailParticleData.length; pdi++) {
         var pd = trailParticleData[pdi];
-        if (!pd.sprite) continue;
+        if (!pd.mesh) continue;
         pd.t += pd.speed * dir * pDt;
         if (pd.t > 1) pd.t -= 1;
         if (pd.t < 0) pd.t += 1;
         var ppt = trailParticleCurve.getPointAt(pd.t);
-        trailParticleCurve.getTangentAt(pd.t, _pTan).normalize();
-        _pNorm.crossVectors(_pUp, _pTan).normalize();
-        _pBinorm.crossVectors(_pTan, _pNorm).normalize();
-        var wobble = Math.sin(pTime * 1.5 + pd.phase * 2.1) * 0.015;
-        var rotAngle = pd.offsetAngle + pTime * 0.25;
-        var offX = Math.cos(rotAngle) * (pd.offsetRadius + wobble);
-        var offY = Math.sin(rotAngle) * (pd.offsetRadius + wobble) * 0.5;
-        var flicker = 0.4 + 0.6 * Math.abs(Math.sin(pTime * pd.flickerFreq + pd.phase));
-        var pulse = 0.8 + 0.2 * Math.sin(pTime * pd.pulseFreq + pd.phase * 1.3);
-        pd.sprite.position.set(
-          ppt.x + _pNorm.x * offX + _pBinorm.x * offY,
-          ppt.y + _pNorm.y * offX + _pBinorm.y * offY + 0.015,
-          ppt.z + _pNorm.z * offX + _pBinorm.z * offY
-        );
-        pd.sprite.material.opacity = pd.baseAlpha * flicker;
-        var s = pd.baseSize * pulse;
-        pd.sprite.scale.set(s, s, 1);
+        trailParticleCurve.getTangentAt(pd.t, _sTanA).normalize();
+        _sCA.copy(ppt);
+        _sQuat.setFromUnitVectors(_sY, _sTanA);
+        var pulse = 0.85 + 0.15 * Math.sin(pTime * pd.pulseFreq + pd.phase);
+        var brightness = 0.85 + 0.15 * Math.abs(Math.sin(pTime * 2.5 + pd.phase * 1.7));
+        pd.mesh.position.copy(_sCA);
+        pd.mesh.position.y += 0.01;
+        pd.mesh.quaternion.copy(_sQuat);
+        pd.mesh.material.opacity = brightness;
+        pd.mesh.scale.set(pulse, 1, pulse);
+        if (pd.glowMesh) {
+          pd.glowMesh.position.copy(_sCA);
+          pd.glowMesh.position.y += 0.01;
+          pd.glowMesh.quaternion.copy(_sQuat);
+          pd.glowMesh.material.opacity = 0.3 + 0.2 * brightness;
+          pd.glowMesh.scale.set(pulse * 1.2, 1.02, pulse * 1.2);
+        }
       }
     }
 
@@ -6191,7 +6195,7 @@ var ThreeMap = (function() {
     }
     var trailCurve = new THREE.CatmullRomCurve3(trailPoints, false, 'catmullrom', 0.0);
     var tubeGeo = new THREE.TubeGeometry(trailCurve, 280, 0.12, 6, false);
-    var tubeMat = new THREE.MeshBasicMaterial({ color: 0xffcc44, transparent: true, opacity: 0.75, depthWrite: false });
+    var tubeMat = new THREE.MeshBasicMaterial({ color: 0xffcc44, transparent: true, opacity: 0.6, depthWrite: false });
     var tubeMesh = new THREE.Mesh(tubeGeo, tubeMat);
     tubeMesh.renderOrder = 999; tubeMesh.userData.isTrail = true;
     mountainGroup.add(tubeMesh);
@@ -6233,98 +6237,62 @@ var ThreeMap = (function() {
     var trailDir = (activeT && activeT.direction === -1) ? -1 : 1;
 
     trailParticleTexture = null;
-    function getTrailStarTexture() {
-      if (trailParticleTexture) return trailParticleTexture;
-      var c = document.createElement('canvas');
-      c.width = 64; c.height = 64;
-      var ctx = c.getContext('2d');
-      var cx = 32, cy = 32;
-      var glowGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, 28);
-      glowGrad.addColorStop(0, 'rgba(255,255,255,1)');
-      glowGrad.addColorStop(0.08, 'rgba(255,220,255,1)');
-      glowGrad.addColorStop(0.2, 'rgba(220,120,255,0.95)');
-      glowGrad.addColorStop(0.45, 'rgba(180,60,255,0.6)');
-      glowGrad.addColorStop(0.75, 'rgba(140,30,220,0.2)');
-      glowGrad.addColorStop(1, 'rgba(100,0,180,0)');
-      ctx.fillStyle = glowGrad;
-      ctx.beginPath();
-      ctx.arc(cx, cy, 28, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(255,230,255,1)';
-      ctx.lineCap = 'round';
-      ctx.lineWidth = 3;
-      ctx.shadowColor = 'rgba(200,80,255,1)';
-      ctx.shadowBlur = 10;
-      ctx.beginPath();
-      ctx.moveTo(cx, cy - 12); ctx.lineTo(cx, cy + 12);
-      ctx.moveTo(cx - 12, cy); ctx.lineTo(cx + 12, cy);
-      ctx.stroke();
-      ctx.shadowBlur = 0;
-      ctx.fillStyle = 'rgba(255,255,255,1)';
-      ctx.beginPath();
-      ctx.arc(cx, cy, 4.5, 0, Math.PI * 2);
-      ctx.fill();
-      var tex = new THREE.CanvasTexture(c);
-      tex.needsUpdate = true;
-      trailParticleTexture = tex;
-      return tex;
-    }
-
-    var particleCount = 40;
+    var segCount = 14;
     trailParticleData = [];
-    var starTex = getTrailStarTexture();
-    var upVec = new THREE.Vector3(0, 1, 0);
-    var tmpTangent = new THREE.Vector3();
-    var tmpNormal = new THREE.Vector3();
-    var tmpBinormal = new THREE.Vector3();
-    for (var pi = 0; pi < particleCount; pi++) {
-      var pT = pi / particleCount + (Math.random() - 0.5) * 0.015;
-      var pSpeed = 0.04 + Math.random() * 0.025;
-      var pPhase = Math.random() * Math.PI * 2;
-      var pSize = 0.26 + Math.random() * 0.14;
-      var pBaseAlpha = 0.8 + Math.random() * 0.2;
-      var pOffsetRadius = Math.random() * 0.065;
-      var pOffsetAngle = Math.random() * Math.PI * 2;
-      var pData = {
-        t: pT,
-        speed: pSpeed,
-        phase: pPhase,
-        baseSize: pSize,
-        baseAlpha: pBaseAlpha,
-        offsetRadius: pOffsetRadius,
-        offsetAngle: pOffsetAngle,
-        flickerFreq: 2.2 + Math.random() * 2.0,
-        pulseFreq: 2.5 + Math.random() * 1.5,
-        sprite: null
+    var segRadius = 0.06;
+    for (var si = 0; si < segCount; si++) {
+      var sT = si / segCount + (Math.random() - 0.5) * 0.025;
+      var sSpeed = 0.035 + Math.random() * 0.02;
+      var sLen = 0.7 + Math.random() * 0.4;
+      var sPhase = Math.random() * Math.PI * 2;
+      var sData = {
+        t: sT,
+        speed: sSpeed,
+        phase: sPhase,
+        pulseFreq: 1.2 + Math.random() * 0.8,
+        mesh: null,
+        glowMesh: null
       };
-      var sMat = new THREE.SpriteMaterial({
-        map: starTex,
-        color: 0xdd88ff,
+      var segMat = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
         transparent: true,
-        opacity: pBaseAlpha,
+        opacity: 1.0,
         depthWrite: false,
         depthTest: false,
         blending: THREE.AdditiveBlending
       });
-      var sprite = new THREE.Sprite(sMat);
-      sprite.scale.set(pSize, pSize, 1);
-      sprite.renderOrder = 1001;
-      sprite.userData.isTrailParticle = true;
-      var ct = ((pT % 1) + 1) % 1;
-      var pt0 = trailCurve.getPointAt(ct);
-      trailCurve.getTangentAt(ct, tmpTangent).normalize();
-      tmpNormal.crossVectors(upVec, tmpTangent).normalize();
-      tmpBinormal.crossVectors(tmpTangent, tmpNormal).normalize();
-      var offX = Math.cos(pOffsetAngle) * pOffsetRadius;
-      var offY = Math.sin(pOffsetAngle) * pOffsetRadius * 0.5;
-      sprite.position.set(
-        pt0.x + tmpNormal.x * offX + tmpBinormal.x * offY,
-        pt0.y + tmpNormal.y * offX + tmpBinormal.y * offY + 0.015,
-        pt0.z + tmpNormal.z * offX + tmpBinormal.z * offY
-      );
-      mountainGroup.add(sprite);
-      pData.sprite = sprite;
-      trailParticleData.push(pData);
+      var segGeo = new THREE.CylinderGeometry(segRadius, segRadius, sLen, 10, 1, false);
+      var segMesh = new THREE.Mesh(segGeo, segMat);
+      segMesh.renderOrder = 1002;
+      segMesh.userData.isTrailParticle = true;
+      var glowMat = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.35,
+        depthWrite: false,
+        depthTest: false,
+        blending: THREE.AdditiveBlending
+      });
+      var glowGeo = new THREE.CylinderGeometry(segRadius * 2.5, segRadius * 2.5, sLen * 1.15, 10, 1, false);
+      var glowMesh = new THREE.Mesh(glowGeo, glowMat);
+      glowMesh.renderOrder = 1001;
+      glowMesh.userData.isTrailParticle = true;
+      var ct = ((sT % 1) + 1) % 1;
+      var cPt = trailCurve.getPointAt(ct);
+      trailCurve.getTangentAt(ct, _sTanA).normalize();
+      _sCA.copy(cPt);
+      _sQuat.setFromUnitVectors(_sY, _sTanA);
+      segMesh.quaternion.copy(_sQuat);
+      glowMesh.quaternion.copy(_sQuat);
+      segMesh.position.copy(_sCA);
+      glowMesh.position.copy(_sCA);
+      segMesh.position.y += 0.01;
+      glowMesh.position.y += 0.01;
+      mountainGroup.add(glowMesh);
+      mountainGroup.add(segMesh);
+      sData.mesh = segMesh;
+      sData.glowMesh = glowMesh;
+      trailParticleData.push(sData);
     }
     trailParticleCurve = trailCurve;
     trailParticleDir = trailDir;
