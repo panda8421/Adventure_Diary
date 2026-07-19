@@ -62,14 +62,14 @@ var ThreeMap = (function() {
   var trailParticleDir = 1;
   var trailParticleTexture = null;
   var trailParticleLastTime = 0;
-  var _pUp = new THREE.Vector3(0, 1, 0);
-  var _pTan = new THREE.Vector3();
-  var _pNorm = new THREE.Vector3();
-  var _pBinorm = new THREE.Vector3();
-  var _sQuat = new THREE.Quaternion();
-  var _sY = new THREE.Vector3(0, 1, 0);
-  var _sTanA = new THREE.Vector3();
-  var _sCA = new THREE.Vector3();
+  var _pUp = null;
+  var _pTan = null;
+  var _pNorm = null;
+  var _pBinorm = null;
+  var _sQuat = null;
+  var _sY = null;
+  var _sTanA = null;
+  var _sCA = null;
   var trailNameOverrides = {};
   var deletedDefaultTrailIds = {};
   var onTrailChanged = null;
@@ -167,6 +167,17 @@ var ThreeMap = (function() {
     if (!container) {
       console.error('[ThreeMap] 容器不存在:', containerId);
       return;
+    }
+
+    if (!_pUp) {
+      _pUp = new THREE.Vector3(0, 1, 0);
+      _pTan = new THREE.Vector3();
+      _pNorm = new THREE.Vector3();
+      _pBinorm = new THREE.Vector3();
+      _sQuat = new THREE.Quaternion();
+      _sY = new THREE.Vector3(0, 1, 0);
+      _sTanA = new THREE.Vector3();
+      _sCA = new THREE.Vector3();
     }
 
     if (!editMouse) editMouse = new THREE.Vector2();
@@ -1423,7 +1434,7 @@ var ThreeMap = (function() {
       });
     }
 
-    // 轨迹段条流动动画（管内发光段流动）
+    // 轨迹段条流动动画（柔性段条贴合路径）
     if (trailParticleCurve && trailParticleData.length > 0) {
       var pNow = Date.now();
       if (!trailParticleLastTime) trailParticleLastTime = pNow;
@@ -1431,29 +1442,45 @@ var ThreeMap = (function() {
       trailParticleLastTime = pNow;
       var pTime = pNow * 0.001;
       var dir = trailParticleDir;
+      var curveLen = trailParticleCurve.getLength();
       for (var pdi = 0; pdi < trailParticleData.length; pdi++) {
         var pd = trailParticleData[pdi];
-        if (!pd.mesh) continue;
+        if (!pd.meshes || pd.meshes.length === 0) continue;
         pd.t += pd.speed * dir * pDt;
         if (pd.t > 1) pd.t -= 1;
         if (pd.t < 0) pd.t += 1;
-        var ppt = trailParticleCurve.getPointAt(pd.t);
-        trailParticleCurve.getTangentAt(pd.t, _sTanA).normalize();
-        _sCA.copy(ppt);
-        _sQuat.setFromUnitVectors(_sY, _sTanA);
         var pulse = 0.85 + 0.15 * Math.sin(pTime * pd.pulseFreq + pd.phase);
         var brightness = 0.85 + 0.15 * Math.abs(Math.sin(pTime * 2.5 + pd.phase * 1.7));
-        pd.mesh.position.copy(_sCA);
-        pd.mesh.position.y += 0.01;
-        pd.mesh.quaternion.copy(_sQuat);
-        pd.mesh.material.opacity = brightness;
-        pd.mesh.scale.set(pulse, 1, pulse);
-        if (pd.glowMesh) {
-          pd.glowMesh.position.copy(_sCA);
-          pd.glowMesh.position.y += 0.01;
-          pd.glowMesh.quaternion.copy(_sQuat);
-          pd.glowMesh.material.opacity = 0.3 + 0.2 * brightness;
-          pd.glowMesh.scale.set(pulse * 1.2, 1.02, pulse * 1.2);
+        var subCount = pd.meshes.length;
+        var subSpacing = pd.segLen / subCount;
+        for (var subi2 = 0; subi2 < subCount; subi2++) {
+          var subOff = (subi2 - (subCount - 1) / 2) * subSpacing;
+          var subT2 = pd.t + (subOff / curveLen) * dir;
+          if (subT2 < 0) subT2 += 1;
+          if (subT2 > 1) subT2 -= 1;
+          var subPt = trailParticleCurve.getPointAt(subT2);
+          trailParticleCurve.getTangentAt(subT2, _sTanA).normalize();
+          _sCA.copy(subPt);
+          _sQuat.setFromUnitVectors(_sY, _sTanA);
+          var mesh2 = pd.meshes[subi2];
+          var glow2 = pd.glowMeshes[subi2];
+          var distC = Math.abs(subOff) / (pd.segLen * 0.5);
+          var endF = 1.0;
+          if (distC > 0.7) {
+            endF = 1.0 - (distC - 0.7) / 0.3 * 0.5;
+          }
+          mesh2.position.copy(_sCA);
+          mesh2.position.y += 0.01;
+          mesh2.quaternion.copy(_sQuat);
+          mesh2.material.opacity = brightness * endF;
+          mesh2.scale.set(pulse, 1, pulse);
+          if (glow2) {
+            glow2.position.copy(_sCA);
+            glow2.position.y += 0.01;
+            glow2.quaternion.copy(_sQuat);
+            glow2.material.opacity = (0.3 + 0.2 * brightness) * endF;
+            glow2.scale.set(pulse * 1.2, 1.02, pulse * 1.2);
+          }
         }
       }
     }
@@ -6240,6 +6267,8 @@ var ThreeMap = (function() {
     var segCount = 14;
     trailParticleData = [];
     var segRadius = 0.06;
+    var subSegCount = 5;
+    var totalCurveLen = trailCurve.getLength();
     for (var si = 0; si < segCount; si++) {
       var sT = si / segCount + (Math.random() - 0.5) * 0.025;
       var sSpeed = 0.035 + Math.random() * 0.02;
@@ -6248,50 +6277,65 @@ var ThreeMap = (function() {
       var sData = {
         t: sT,
         speed: sSpeed,
+        segLen: sLen,
         phase: sPhase,
         pulseFreq: 1.2 + Math.random() * 0.8,
-        mesh: null,
-        glowMesh: null
+        meshes: [],
+        glowMeshes: []
       };
-      var segMat = new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        transparent: true,
-        opacity: 1.0,
-        depthWrite: false,
-        depthTest: false,
-        blending: THREE.AdditiveBlending
-      });
-      var segGeo = new THREE.CylinderGeometry(segRadius, segRadius, sLen, 10, 1, false);
-      var segMesh = new THREE.Mesh(segGeo, segMat);
-      segMesh.renderOrder = 1002;
-      segMesh.userData.isTrailParticle = true;
-      var glowMat = new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        transparent: true,
-        opacity: 0.35,
-        depthWrite: false,
-        depthTest: false,
-        blending: THREE.AdditiveBlending
-      });
-      var glowGeo = new THREE.CylinderGeometry(segRadius * 2.5, segRadius * 2.5, sLen * 1.15, 10, 1, false);
-      var glowMesh = new THREE.Mesh(glowGeo, glowMat);
-      glowMesh.renderOrder = 1001;
-      glowMesh.userData.isTrailParticle = true;
-      var ct = ((sT % 1) + 1) % 1;
-      var cPt = trailCurve.getPointAt(ct);
-      trailCurve.getTangentAt(ct, _sTanA).normalize();
-      _sCA.copy(cPt);
-      _sQuat.setFromUnitVectors(_sY, _sTanA);
-      segMesh.quaternion.copy(_sQuat);
-      glowMesh.quaternion.copy(_sQuat);
-      segMesh.position.copy(_sCA);
-      glowMesh.position.copy(_sCA);
-      segMesh.position.y += 0.01;
-      glowMesh.position.y += 0.01;
-      mountainGroup.add(glowMesh);
-      mountainGroup.add(segMesh);
-      sData.mesh = segMesh;
-      sData.glowMesh = glowMesh;
+      var subLen = sLen / subSegCount * 1.25;
+      var subRadius = segRadius;
+      for (var subi = 0; subi < subSegCount; subi++) {
+        var subOffset = (subi - (subSegCount - 1) / 2) * (sLen / subSegCount);
+        var subT = sT + (subOffset / totalCurveLen) * trailDir;
+        if (subT < 0) subT += 1;
+        if (subT > 1) subT -= 1;
+        var segMat = new THREE.MeshBasicMaterial({
+          color: 0xffffff,
+          transparent: true,
+          opacity: 1.0,
+          depthWrite: false,
+          depthTest: false,
+          blending: THREE.AdditiveBlending
+        });
+        var segGeo = new THREE.CylinderGeometry(subRadius, subRadius, subLen, 8, 1, false);
+        var segMesh = new THREE.Mesh(segGeo, segMat);
+        segMesh.renderOrder = 1002;
+        segMesh.userData.isTrailParticle = true;
+        var glowMat = new THREE.MeshBasicMaterial({
+          color: 0xffffff,
+          transparent: true,
+          opacity: 0.35,
+          depthWrite: false,
+          depthTest: false,
+          blending: THREE.AdditiveBlending
+        });
+        var glowGeo = new THREE.CylinderGeometry(subRadius * 2.5, subRadius * 2.5, subLen * 1.15, 8, 1, false);
+        var glowMesh = new THREE.Mesh(glowGeo, glowMat);
+        glowMesh.renderOrder = 1001;
+        glowMesh.userData.isTrailParticle = true;
+        var cPt = trailCurve.getPointAt(subT);
+        trailCurve.getTangentAt(subT, _sTanA).normalize();
+        _sCA.copy(cPt);
+        _sQuat.setFromUnitVectors(_sY, _sTanA);
+        segMesh.quaternion.copy(_sQuat);
+        glowMesh.quaternion.copy(_sQuat);
+        segMesh.position.copy(_sCA);
+        glowMesh.position.copy(_sCA);
+        segMesh.position.y += 0.01;
+        glowMesh.position.y += 0.01;
+        var endFade = 1.0;
+        var distFromCenter = Math.abs(subOffset) / (sLen * 0.5);
+        if (distFromCenter > 0.7) {
+          endFade = 1.0 - (distFromCenter - 0.7) / 0.3 * 0.5;
+        }
+        segMat.opacity = endFade;
+        glowMat.opacity = 0.35 * endFade;
+        mountainGroup.add(glowMesh);
+        mountainGroup.add(segMesh);
+        sData.meshes.push(segMesh);
+        sData.glowMeshes.push(glowMesh);
+      }
       trailParticleData.push(sData);
     }
     trailParticleCurve = trailCurve;
