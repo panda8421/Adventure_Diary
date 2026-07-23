@@ -3334,16 +3334,75 @@ var ThreeMap = (function() {
         var tez = (tnp.y - 0.5) * size;
         var teh = dem.getHeight(temple.lng, temple.lat);
         var tey = (teh - dem.centerHeight) / result.worldScale * result.verticalScale + 0.3;
-        var templeGeo = new THREE.ConeGeometry(0.5, 1.5, 6);
-        var templeMat = new THREE.MeshStandardMaterial({
-          color: 0xffaa55,
-          emissive: 0x994400,
-          emissiveIntensity: 0.3,
-          roughness: 0.5
+
+        // 城镇标记 - 小建筑群底座
+        var townBaseGeo = new THREE.BoxGeometry(0.7, 0.25, 0.7);
+        var townBaseMat = new THREE.MeshStandardMaterial({
+          color: 0xcc8866,
+          emissive: 0x774422,
+          emissiveIntensity: 0.2,
+          roughness: 0.7
         });
-        var templeMesh = new THREE.Mesh(templeGeo, templeMat);
-        templeMesh.position.set(tex, tey + 0.75, tez);
-        group.add(templeMesh);
+        var townBase = new THREE.Mesh(townBaseGeo, townBaseMat);
+        townBase.position.set(tex, tey + 0.12, tez);
+        group.add(townBase);
+
+        // 小房子1
+        var house1Geo = new THREE.BoxGeometry(0.25, 0.35, 0.25);
+        var house1Mat = new THREE.MeshStandardMaterial({
+          color: 0xddaa77,
+          emissive: 0x885533,
+          emissiveIntensity: 0.15,
+          roughness: 0.6
+        });
+        var house1 = new THREE.Mesh(house1Geo, house1Mat);
+        house1.position.set(tex - 0.12, tey + 0.42, tez - 0.12);
+        group.add(house1);
+
+        // 小房子2
+        var house2Geo = new THREE.BoxGeometry(0.2, 0.28, 0.2);
+        var house2Mat = new THREE.MeshStandardMaterial({
+          color: 0xe8bb88,
+          emissive: 0x996644,
+          emissiveIntensity: 0.15,
+          roughness: 0.6
+        });
+        var house2 = new THREE.Mesh(house2Geo, house2Mat);
+        house2.position.set(tex + 0.13, tey + 0.39, tez + 0.1);
+        group.add(house2);
+
+        // 小房子3（稍高）
+        var house3Geo = new THREE.BoxGeometry(0.18, 0.4, 0.18);
+        var house3Mat = new THREE.MeshStandardMaterial({
+          color: 0xd4a070,
+          emissive: 0x805530,
+          emissiveIntensity: 0.15,
+          roughness: 0.6
+        });
+        var house3 = new THREE.Mesh(house3Geo, house3Mat);
+        house3.position.set(tex - 0.05, tey + 0.5, tez + 0.14);
+        group.add(house3);
+
+        // 🏘️ 城镇emoji图标sprite
+        var townCanvas = document.createElement('canvas');
+        townCanvas.width = 64; townCanvas.height = 64;
+        var townCtx = townCanvas.getContext('2d');
+        townCtx.font = '44px sans-serif';
+        townCtx.textAlign = 'center';
+        townCtx.textBaseline = 'middle';
+        townCtx.shadowColor = 'rgba(0,0,0,0.8)';
+        townCtx.shadowBlur = 8;
+        townCtx.fillText('🏘️', 32, 32);
+        var townTex = new THREE.CanvasTexture(townCanvas);
+        var townIconMat = new THREE.SpriteMaterial({
+          map: townTex, transparent: true, depthTest: false, depthWrite: false
+        });
+        var townIcon = new THREE.Sprite(townIconMat);
+        townIcon.position.set(tex, tey + 1.4, tez);
+        townIcon.scale.set(1.0, 1.0, 1);
+        group.add(townIcon);
+
+        // 名称标签
         if (temple.name) {
           var telc = document.createElement('canvas');
           var telctx = telc.getContext('2d');
@@ -3358,7 +3417,7 @@ var ThreeMap = (function() {
           var telt = new THREE.CanvasTexture(telc);
           var telm = new THREE.SpriteMaterial({ map: telt, transparent: true, depthTest: false, depthWrite: false });
           var tels = new THREE.Sprite(telm);
-          tels.position.set(tex, tey + 2.5, tez);
+          tels.position.set(tex, tey + 2.2, tez);
           tels.scale.set(3.5, 0.8, 1);
           group.add(tels);
         }
